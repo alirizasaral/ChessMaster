@@ -224,6 +224,9 @@ importers:
       chess.js:
         specifier: ^1.4.0
         version: 1.4.0
+      js-chess-engine:
+        specifier: ^2.4.6
+        version: 2.4.6
       react-chessboard:
         specifier: ^5.10.0
         version: 5.10.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -2398,6 +2401,10 @@ packages:
   joycon@3.1.1:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
     engines: {node: '>=10'}
+
+  js-chess-engine@2.4.6:
+    resolution: {integrity: sha512-OKvWKICifXLjUilGzT5RstUv9iGpk04PjGpTyVT0lMlxX2HptoXZ2Q9hNicidnYjFcR7FHpnXFVwreDSF6a5Ng==}
+    engines: {node: '>=24'}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -5016,6 +5023,8 @@ snapshots:
   jiti@2.7.0: {}
 
   joycon@3.1.1: {}
+
+  js-chess-engine@2.4.6: {}
 
   js-tokens@4.0.0: {}
 

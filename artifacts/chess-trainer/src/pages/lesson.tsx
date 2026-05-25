@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Undo2, Check, Volume2, VolumeX, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { checkOpeningMove, OPENINGS } from "@/lib/openings";
+import { pickEngineMoveSan, describeGameOver } from "@/lib/engine";
 
 type ChatMessage = { role: "user" | "coach"; content: string; moveNumber?: number };
 
@@ -235,11 +236,72 @@ export default function Lesson() {
       return true;
     }
 
-    // Line exhausted: we don't know this position — be honest, don't praise blindly.
+    // Line exhausted: we're in free-play mode now — the engine takes over and
+    // plays until the game ends (checkmate, stalemate, or draw).
     if (check.kind === "line_exhausted") {
-      const msg = `You're past the main line I've prepared for the ${lesson.name}. I can't evaluate ${userSan} for you — feel free to keep exploring or tap undo to revisit the recorded line.`;
-      setGame(gameCopy);
-      pushUserAndCoach(msg, afterUserFen, movesAfterUser);
+      // 1) Did the user's move itself end the game?
+      if (gameCopy.isGameOver()) {
+        const endMsg = describeGameOver(gameCopy, lesson.name);
+        setGame(gameCopy);
+        pushUserAndCoach(endMsg, afterUserFen, movesAfterUser);
+        return true;
+      }
+
+      // 2) Otherwise, show the user's move and have the engine reply.
+      updateLesson(lessonId, (l) => ({
+        ...l,
+        fen: afterUserFen,
+        moves: movesAfterUser,
+        status: l.status === "not_started" ? "started" : l.status,
+        chat: [
+          ...l.chat,
+          { role: "user" as const, content: `Played ${userSan}`, moveNumber: movesBefore.length + 1 },
+        ],
+      }));
+      setIsComputerThinking(true);
+
+      const scheduledLessonId = lessonId;
+      const scheduledFen = afterUserFen;
+
+      if (pendingReplyRef.current !== null) {
+        window.clearTimeout(pendingReplyRef.current);
+      }
+
+      pendingReplyRef.current = window.setTimeout(() => {
+        pendingReplyRef.current = null;
+
+        const engineSan = pickEngineMoveSan(scheduledFen);
+        const afterEngine = new Chess(scheduledFen);
+        let finalMoves = movesAfterUser;
+
+        if (engineSan) {
+          const applied = afterEngine.move(engineSan);
+          if (applied) finalMoves = [...movesAfterUser, engineSan];
+        }
+        const finalFen = afterEngine.fen();
+
+        let coachMsg: string;
+        if (afterEngine.isGameOver()) {
+          coachMsg = engineSan
+            ? `I played ${engineSan}. ${describeGameOver(afterEngine, lesson.name)}`
+            : describeGameOver(afterEngine, lesson.name);
+        } else if (engineSan) {
+          coachMsg = `I played ${engineSan}. Your move — we're past the recorded line, so just play on naturally.`;
+        } else {
+          coachMsg = `I have no legal moves. ${describeGameOver(afterEngine, lesson.name)}`;
+        }
+
+        setGame(afterEngine);
+        setIsComputerThinking(false);
+        updateLesson(scheduledLessonId, (l) => ({
+          ...l,
+          fen: finalFen,
+          moves: finalMoves,
+          chat: [...l.chat, { role: "coach" as const, content: coachMsg }],
+        }));
+        playAudio(coachMsg);
+      }, 600);
+
       return true;
     }
 
