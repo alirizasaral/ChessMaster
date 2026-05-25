@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Chess Opening Trainer"
+version = "1.0.0"
+id = "artifacts/chess-trainer"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20518
+
+[services.development]
+run = "pnpm --filter @workspace/chess-trainer run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/chess-trainer", "run", "build" ]
+publicDir = "artifacts/chess-trainer/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20518"
+BASE_PATH = "/"

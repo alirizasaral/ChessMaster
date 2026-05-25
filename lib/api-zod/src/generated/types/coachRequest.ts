@@ -5,9 +5,6 @@
  * Chess Opening Trainer API
  * OpenAPI spec version: 0.1.0
  */
-export interface HealthStatus {
-  status: string;
-}
 
 export interface CoachRequest {
   lessonId: string;
@@ -16,16 +13,3 @@ export interface CoachRequest {
   moves: string[];
   lastMove: string;
 }
-
-export interface CoachResponse {
-  feedback: string;
-}
-
-export interface TtsRequest {
-  text: string;
-}
-
-export interface ErrorResponse {
-  error: string;
-}
-

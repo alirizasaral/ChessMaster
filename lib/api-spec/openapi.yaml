@@ -3,13 +3,15 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Chess Opening Trainer API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: chess
+    description: Chess coaching and TTS operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,70 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /coach:
+    post:
+      operationId: getCoachFeedback
+      tags: [chess]
+      summary: Get LLM coaching feedback for a chess move
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CoachRequest"
+      responses:
+        "200":
+          description: Coaching feedback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CoachResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /tts:
+    post:
+      operationId: textToSpeech
+      tags: [chess]
+      summary: Convert text to speech using ElevenLabs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TtsRequest"
+      responses:
+        "200":
+          description: Audio file (mp3)
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +100,48 @@ components:
       required:
         - status
 
+    CoachRequest:
+      type: object
+      required:
+        - lessonId
+        - lessonName
+        - fen
+        - moves
+        - lastMove
+      properties:
+        lessonId:
+          type: string
+        lessonName:
+          type: string
+        fen:
+          type: string
+        moves:
+          type: array
+          items:
+            type: string
+        lastMove:
+          type: string
+
+    CoachResponse:
+      type: object
+      required:
+        - feedback
+      properties:
+        feedback:
+          type: string
+
+    TtsRequest:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
