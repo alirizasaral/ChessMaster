@@ -178,45 +178,53 @@ export default function Lesson() {
     return true;
   };
 
-  // Click interaction
-  const handleSquareClick = (square: Square) => {
+  // Click interaction (react-chessboard v5 signature: { piece, square })
+  const handleSquareClick = ({ square }: { square: string }) => {
     if (coachMutation.isPending) return;
+    const sq = square as Square;
 
-    const piece = game.get(square);
+    const piece = game.get(sq);
 
     // Nothing selected yet — select if it's the current player's piece
     if (!selectedSquare) {
       if (piece && piece.color === game.turn()) {
-        setSelectedSquare(square);
-        setOptionSquares(getMoveOptions(square));
+        setSelectedSquare(sq);
+        setOptionSquares(getMoveOptions(sq));
       }
       return;
     }
 
     // Clicking the same square → deselect
-    if (square === selectedSquare) {
+    if (sq === selectedSquare) {
       clearSelection();
       return;
     }
 
     // Clicking another own piece → reselect
     if (piece && piece.color === game.turn()) {
-      setSelectedSquare(square);
-      setOptionSquares(getMoveOptions(square));
+      setSelectedSquare(sq);
+      setOptionSquares(getMoveOptions(sq));
       return;
     }
 
     // Attempt the move
-    const moved = executeMove(selectedSquare, square);
+    const moved = executeMove(selectedSquare, sq);
     if (!moved) {
       // Not a legal target — deselect
       clearSelection();
     }
   };
 
-  // Drag-and-drop still works too
-  const handlePieceDrop = (sourceSquare: string, targetSquare: string) => {
+  // Drag-and-drop (react-chessboard v5 signature: { piece, sourceSquare, targetSquare })
+  const handlePieceDrop = ({
+    sourceSquare,
+    targetSquare,
+  }: {
+    sourceSquare: string;
+    targetSquare: string | null;
+  }) => {
     clearSelection();
+    if (!targetSquare) return false;
     return executeMove(sourceSquare as Square, targetSquare as Square);
   };
 
@@ -315,14 +323,15 @@ export default function Lesson() {
           style={{ width: boardWidth, flexShrink: 0 }}
         >
           <Chessboard
-            position={game.fen()}
-            onPieceDrop={handlePieceDrop}
-            onSquareClick={handleSquareClick}
-            boardWidth={boardWidth}
-            customSquareStyles={boardSquareStyles}
-            customDarkSquareStyle={{ backgroundColor: "hsl(var(--primary))" }}
-            customLightSquareStyle={{ backgroundColor: "hsl(var(--secondary))" }}
-            animationDuration={150}
+            options={{
+              position: game.fen(),
+              onPieceDrop: handlePieceDrop,
+              onSquareClick: handleSquareClick,
+              squareStyles: boardSquareStyles,
+              darkSquareStyle: { backgroundColor: "hsl(var(--primary))" },
+              lightSquareStyle: { backgroundColor: "hsl(var(--secondary))" },
+              animationDurationInMs: 150,
+            }}
           />
         </div>
       </div>
