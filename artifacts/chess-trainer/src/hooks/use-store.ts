@@ -1,4 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
+import { OPENINGS } from "@/lib/openings";
+
+function buildWelcomeMessage(lessonId: string, lessonName: string): string {
+  const opening = OPENINGS[lessonId];
+  if (!opening) {
+    return `Welcome to the ${lessonName}. Play your first move when ready!`;
+  }
+  const firstMove = opening.line[0];
+  return `Welcome to the ${opening.name}. ${opening.intro}\n\nLet's start: play 1. ${firstMove} — I'll highlight the square for you.`;
+}
 
 export type LessonStatus = "not_started" | "started" | "finished";
 
@@ -71,7 +81,7 @@ const createInitialState = (): AppState => {
       status: "not_started",
       fen: DEFAULT_FEN,
       moves: [],
-      chat: [{ role: "coach", content: `Welcome to the ${lesson.name}. Play your first move when ready!` }],
+      chat: [{ role: "coach", content: buildWelcomeMessage(lesson.id, lesson.name) }],
       lastUpdated: new Date().toISOString(),
     };
   });

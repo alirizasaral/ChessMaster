@@ -63,6 +63,24 @@ export default function Lesson() {
     };
   }, [lessonId]);
 
+  // Refresh the intro for not-yet-started lessons so existing users (with older
+  // welcome messages in localStorage) also see the new rich opening intro.
+  useEffect(() => {
+    if (!lessonId || !lesson) return;
+    if (lesson.status !== "not_started" || lesson.moves.length > 0) return;
+    const opening = OPENINGS[lessonId];
+    if (!opening) return;
+    const firstMove = opening.line[0];
+    const freshIntro = `Welcome to the ${opening.name}. ${opening.intro}\n\nLet's start: play 1. ${firstMove} — I'll highlight the square for you.`;
+    const current = lesson.chat[0];
+    if (lesson.chat.length === 1 && current?.role === "coach" && current.content === freshIntro) return;
+    updateLesson(lessonId, (l) => ({
+      ...l,
+      chat: [{ role: "coach" as const, content: freshIntro }],
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId]);
+
   const playAudio = useCallback(async (text: string) => {
     if (!soundEnabled) return;
     try {
