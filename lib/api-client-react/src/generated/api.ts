@@ -24,6 +24,8 @@ import type {
   CoachResponse,
   ErrorResponse,
   HealthStatus,
+  QuipRequest,
+  QuipResponse,
   TtsRequest
 } from './api.schemas';
 
@@ -186,6 +188,77 @@ export const useGetCoachFeedback = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getGetCoachFeedbackMutationOptions(options));
+    }
+
+export const getGetQuipUrl = () => {
+
+
+
+
+  return `/api/quip`
+}
+
+/**
+ * @summary Get a witty/ridiculing coach quip about the user's move
+ */
+export const getQuip = async (quipRequest: QuipRequest, options?: RequestInit): Promise<QuipResponse> => {
+
+  return customFetch<QuipResponse>(getGetQuipUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      quipRequest,)
+  }
+);}
+
+
+
+
+export const getGetQuipMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getQuip>>, TError,{data: BodyType<QuipRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof getQuip>>, TError,{data: BodyType<QuipRequest>}, TContext> => {
+
+const mutationKey = ['getQuip'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof getQuip>>, {data: BodyType<QuipRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  getQuip(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GetQuipMutationResult = NonNullable<Awaited<ReturnType<typeof getQuip>>>
+    export type GetQuipMutationBody = BodyType<QuipRequest>
+    export type GetQuipMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Get a witty/ridiculing coach quip about the user's move
+ */
+export const useGetQuip = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getQuip>>, TError,{data: BodyType<QuipRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof getQuip>>,
+        TError,
+        {data: BodyType<QuipRequest>},
+        TContext
+      > => {
+      return useMutation(getGetQuipMutationOptions(options));
     }
 
 export const getTextToSpeechUrl = () => {

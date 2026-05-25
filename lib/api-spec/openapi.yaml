@@ -58,6 +58,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /quip:
+    post:
+      operationId: getQuip
+      tags: [chess]
+      summary: Get a witty/ridiculing coach quip about the user's move
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuipRequest"
+      responses:
+        "200":
+          description: A short witty comment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuipResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /tts:
     post:
       operationId: textToSpeech
@@ -128,6 +159,32 @@ components:
         - feedback
       properties:
         feedback:
+          type: string
+
+    QuipRequest:
+      type: object
+      required:
+        - lessonName
+        - userMove
+        - moveNumber
+      properties:
+        lessonName:
+          type: string
+        userMove:
+          type: string
+        moveNumber:
+          type: integer
+        recentMoves:
+          type: array
+          items:
+            type: string
+
+    QuipResponse:
+      type: object
+      required:
+        - quip
+      properties:
+        quip:
           type: string
 
     TtsRequest:

@@ -267,7 +267,23 @@ export default function Lesson() {
         window.clearTimeout(pendingReplyRef.current);
       }
 
-      pendingReplyRef.current = window.setTimeout(() => {
+      // Kick off a witty trash-talk quip in parallel with the engine think.
+      // We don't block on it — if it's slow or fails, we just skip the quip.
+      const quipPromise: Promise<string | null> = fetch(`${import.meta.env.BASE_URL}api/quip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lessonName: lesson.name,
+          userMove: userSan,
+          moveNumber: movesBefore.length + 1,
+          recentMoves: movesAfterUser,
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j: { quip?: string } | null) => (j?.quip ? j.quip : null))
+        .catch(() => null);
+
+      pendingReplyRef.current = window.setTimeout(async () => {
         pendingReplyRef.current = null;
 
         const engineSan = pickEngineMoveSan(scheduledFen);
@@ -280,16 +296,24 @@ export default function Lesson() {
         }
         const finalFen = afterEngine.fen();
 
-        let coachMsg: string;
+        // Wait for the quip, but cap it at 2.5s so the coach never feels stuck.
+        const quip = await Promise.race<string | null>([
+          quipPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+        ]);
+
+        const parts: string[] = [];
+        if (quip) parts.push(quip);
+
         if (afterEngine.isGameOver()) {
-          coachMsg = engineSan
-            ? `I played ${engineSan}. ${describeGameOver(afterEngine, lesson.name)}`
-            : describeGameOver(afterEngine, lesson.name);
+          if (engineSan) parts.push(`I played ${engineSan}.`);
+          parts.push(describeGameOver(afterEngine, lesson.name));
         } else if (engineSan) {
-          coachMsg = `I played ${engineSan}. Your move — we're past the recorded line, so just play on naturally.`;
+          parts.push(`I played ${engineSan}. Your move.`);
         } else {
-          coachMsg = `I have no legal moves. ${describeGameOver(afterEngine, lesson.name)}`;
+          parts.push(`I have no legal moves. ${describeGameOver(afterEngine, lesson.name)}`);
         }
+        const coachMsg = parts.join("\n\n");
 
         setGame(afterEngine);
         setIsComputerThinking(false);

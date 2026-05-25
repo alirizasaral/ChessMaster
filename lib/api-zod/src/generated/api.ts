@@ -34,6 +34,21 @@ export const GetCoachFeedbackResponse = zod.object({
 
 
 /**
+ * @summary Get a witty/ridiculing coach quip about the user's move
+ */
+export const GetQuipBody = zod.object({
+  "lessonName": zod.string(),
+  "userMove": zod.string(),
+  "moveNumber": zod.number(),
+  "recentMoves": zod.array(zod.string()).optional()
+})
+
+export const GetQuipResponse = zod.object({
+  "quip": zod.string()
+})
+
+
+/**
  * @summary Convert text to speech using ElevenLabs
  */
 export const TextToSpeechBody = zod.object({

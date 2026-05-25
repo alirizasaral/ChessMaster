@@ -10,11 +10,11 @@ import { Chess } from "chess.js";
  * Ask the engine for a reply move and return it in SAN.
  *
  * @param fen   Current position (it's the engine's turn in this FEN).
- * @param level 0 = beginner ... 3 = expert. Default 2 (club-ish strength).
+ * @param level 1 = beginner ... 5 = grandmaster. Default 5 (max strength).
  * @returns SAN string (e.g. "Nf3", "Qxe7+") or null if there's no legal move
  *          (i.e. the position is already game-over).
  */
-export function pickEngineMoveSan(fen: string, level = 2): string | null {
+export function pickEngineMoveSan(fen: string, level = 5): string | null {
   try {
     const raw = aiMove(fen, level) as Record<string, string>;
     const entry = Object.entries(raw)[0];

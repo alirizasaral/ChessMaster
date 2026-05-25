@@ -10,4 +10,6 @@ export * from './coachRequest';
 export * from './coachResponse';
 export * from './errorResponse';
 export * from './healthStatus';
+export * from './quipRequest';
+export * from './quipResponse';
 export * from './ttsRequest';
