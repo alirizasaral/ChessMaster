@@ -10,6 +10,15 @@ import { useToast } from "@/hooks/use-toast";
 
 type ChatMessage = { role: "user" | "coach"; content: string; moveNumber?: number };
 
+const FIRST_MOVE_HINTS: Record<string, { square: Square; move: string; tip: string }> = {
+  "italian-game":     { square: "e2", move: "1. e4", tip: "Push the e-pawn two squares to control the center." },
+  "ruy-lopez":        { square: "e2", move: "1. e4", tip: "Open with e4 — the classic starting move for the Ruy Lopez." },
+  "queens-gambit":    { square: "d2", move: "1. d4", tip: "Push the d-pawn to claim central space for the Queen's Gambit." },
+  "london-system":    { square: "d2", move: "1. d4", tip: "Start with d4 to build the solid London pawn structure." },
+  "sicilian-defense": { square: "e2", move: "1. e4", tip: "Open with e4 to invite the Sicilian — the sharpest reply." },
+  "caro-kann":        { square: "e2", move: "1. e4", tip: "Play e4 to prompt Black's solid Caro-Kann setup." },
+};
+
 export default function Lesson() {
   const { lessonId } = useParams();
   const { state, updateLesson, toggleSound } = useStore();
@@ -19,7 +28,7 @@ export default function Lesson() {
   const soundEnabled = state.settings.sound;
 
   const [game, setGame] = useState(new Chess());
-  const [boardWidth, setBoardWidth] = useState(300);
+  const [boardWidth, setBoardWidth] = useState(() => Math.min(window.innerWidth - 48, 360));
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
   const [optionSquares, setOptionSquares] = useState<Record<string, React.CSSProperties>>({});
 
@@ -61,18 +70,14 @@ export default function Lesson() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lessonId]);
 
-  // Responsive board width
+  // Responsive board width — cap at 360px so chat is always visible
   useEffect(() => {
     const handleResize = () => {
-      if (containerRef.current) {
-        const width = Math.min(containerRef.current.clientWidth, 600);
-        setBoardWidth(width - 32);
-      }
+      setBoardWidth(Math.min(window.innerWidth - 48, 360));
     };
-    const ro = new ResizeObserver(handleResize);
-    if (containerRef.current) ro.observe(containerRef.current);
+    window.addEventListener("resize", handleResize);
     handleResize();
-    return () => ro.disconnect();
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   // Scroll chat to bottom
@@ -238,6 +243,19 @@ export default function Lesson() {
   };
 
   const isFirstLesson = lesson.moves.length === 0;
+  const firstMoveHint = lessonId ? FIRST_MOVE_HINTS[lessonId] : undefined;
+
+  // When no piece is selected on a fresh board, gently pulse the suggested first-move square
+  const boardSquareStyles = isFirstLesson && !selectedSquare && firstMoveHint
+    ? {
+        ...optionSquares,
+        [firstMoveHint.square]: {
+          background: "rgba(var(--color-primary-rgb, 89 125 80), 0.25)",
+          borderRadius: "4px",
+          boxShadow: "inset 0 0 0 2px hsl(var(--primary))",
+        },
+      }
+    : optionSquares;
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
@@ -292,13 +310,16 @@ export default function Lesson() {
         className="flex-none bg-muted/30 border-b border-border p-4 flex justify-center"
         ref={containerRef}
       >
-        <div className="rounded-sm overflow-hidden shadow-md">
+        <div
+          className="rounded-sm overflow-hidden shadow-md"
+          style={{ width: boardWidth, height: boardWidth, flexShrink: 0 }}
+        >
           <Chessboard
             position={game.fen()}
             onPieceDrop={handlePieceDrop}
             onSquareClick={handleSquareClick}
             boardWidth={boardWidth}
-            customSquareStyles={optionSquares}
+            customSquareStyles={boardSquareStyles}
             customDarkSquareStyle={{ backgroundColor: "hsl(var(--primary))" }}
             customLightSquareStyle={{ backgroundColor: "hsl(var(--secondary))" }}
             animationDuration={150}
@@ -312,18 +333,22 @@ export default function Lesson() {
 
           {/* First-time instructions */}
           {isFirstLesson && (
-            <div className="rounded-xl border border-border bg-muted/60 p-4 text-sm text-foreground space-y-2">
-              <p className="font-medium">How to play</p>
-              <ul className="space-y-1 text-muted-foreground list-disc list-inside">
-                <li>Tap a piece to select it — legal moves will appear as dots</li>
-                <li>Tap any highlighted square to move there</li>
-                <li>Tap the same piece again to deselect it</li>
-                <li>You can also drag and drop pieces</li>
-                <li>Your coach will analyse every move you make</li>
-              </ul>
-              <p className="text-muted-foreground pt-1">
-                Make your first move to begin the <span className="text-foreground font-medium">{lesson.name}</span>.
-              </p>
+            <div className="rounded-xl border border-border bg-muted/60 p-4 text-sm text-foreground space-y-3">
+              {firstMoveHint && (
+                <div className="flex items-start gap-3 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2">
+                  <span className="font-mono font-bold text-primary text-base leading-tight shrink-0">{firstMoveHint.move}</span>
+                  <span className="text-muted-foreground leading-snug">{firstMoveHint.tip}</span>
+                </div>
+              )}
+              <div>
+                <p className="font-medium mb-1">How to play</p>
+                <ul className="space-y-1 text-muted-foreground list-disc list-inside">
+                  <li>Tap the highlighted square to make your first move</li>
+                  <li>Tap a piece to see all legal moves as dots</li>
+                  <li>Tap a highlighted square to move there</li>
+                  <li>Drag and drop also works</li>
+                </ul>
+              </div>
             </div>
           )}
 
