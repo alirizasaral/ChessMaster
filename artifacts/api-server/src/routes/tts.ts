@@ -3,7 +3,7 @@ import { TextToSpeechBody } from "@workspace/api-zod";
 
 const router = Router();
 
-const ELEVENLABS_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"; // "Bella" - friendly female voice
+const ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // "Rachel" - calm, soothing narrator voice
 const ELEVENLABS_MODEL_ID = "eleven_turbo_v2";
 
 router.post("/tts", async (req, res) => {
@@ -34,8 +34,10 @@ router.post("/tts", async (req, res) => {
           text,
           model_id: ELEVENLABS_MODEL_ID,
           voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
+            stability: 0.85,
+            similarity_boost: 0.6,
+            style: 0.0,
+            use_speaker_boost: false,
           },
         }),
       }
