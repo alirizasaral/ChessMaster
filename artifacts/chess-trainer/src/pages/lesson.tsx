@@ -221,9 +221,23 @@ export default function Lesson() {
     // Off-line: gently correct the user. Don't auto-play.
     if (!check || check.kind === "off_line") {
       const expected = check && check.kind === "off_line" ? check.expected : null;
-      const msg = expected
-        ? `That's not the main line of the ${lesson.name}. The recommended move here is ${expected}. Tap undo and try again.`
-        : `You're past the main line I know — feel free to keep playing or tap undo to revisit.`;
+      const expectedNote = check && check.kind === "off_line" ? check.expectedNote : null;
+      let msg: string;
+      if (expected) {
+        msg = `That's not the main line of the ${lesson.name}. The recommended move is ${expected}.`;
+        if (expectedNote) msg += ` ${expectedNote}`;
+        msg += ` Tap undo and try again.`;
+      } else {
+        msg = `You're past the main line I know — feel free to keep playing or tap undo to revisit.`;
+      }
+      setGame(gameCopy);
+      pushUserAndCoach(msg, afterUserFen, movesAfterUser);
+      return true;
+    }
+
+    // Line exhausted: we don't know this position — be honest, don't praise blindly.
+    if (check.kind === "line_exhausted") {
+      const msg = `You're past the main line I've prepared for the ${lesson.name}. I can't evaluate ${userSan} for you — feel free to keep exploring or tap undo to revisit the recorded line.`;
       setGame(gameCopy);
       pushUserAndCoach(msg, afterUserFen, movesAfterUser);
       return true;
@@ -232,9 +246,9 @@ export default function Lesson() {
     // On-line: lesson complete?
     if (check.isComplete) {
       const opening = OPENINGS[lessonId];
-      const msg = opening
-        ? `Excellent — ${userSan} is correct. ${opening.finalNote}`
-        : `Excellent — ${userSan} is correct. You've completed this line!`;
+      let msg = `Excellent — ${userSan} is correct.`;
+      if (check.userMoveNote) msg += ` ${check.userMoveNote}`;
+      msg += `\n\n${opening ? opening.finalNote : "You've completed this line!"}`;
       setGame(gameCopy);
       pushUserAndCoach(msg, afterUserFen, movesAfterUser);
       return true;
@@ -243,6 +257,9 @@ export default function Lesson() {
     // On-line with a computer reply to play.
     const computerSan = check.nextComputerMove!;
     const nextUserMove = check.nextUserMove;
+    const userMoveNote = check.userMoveNote;
+    const computerMoveNote = check.computerMoveNote;
+    const nextUserMoveNote = check.nextUserMoveNote;
 
     // Show the user's move immediately and mark the computer as thinking.
     updateLesson(lessonId, (l) => ({
@@ -283,7 +300,32 @@ export default function Lesson() {
       const finalFen = afterComputer.fen();
       const finalMoves = [...movesAfterUser, computerSan];
 
-      const coachMsg = nextUserMove
+      // Build a rich coach message: explain why each move was played and what's next.
+      const parts: string[] = [];
+      parts.push(
+        userMoveNote
+          ? `Good — ${userSan}. ${userMoveNote}`
+          : `Good — ${userSan}.`,
+      );
+      parts.push(
+        computerMoveNote
+          ? `I played ${computerSan}. ${computerMoveNote}`
+          : `I played ${computerSan}.`,
+      );
+      if (nextUserMove) {
+        parts.push(
+          nextUserMoveNote
+            ? `Now play ${nextUserMove}. ${nextUserMoveNote}`
+            : `Now play ${nextUserMove}.`,
+        );
+      } else {
+        parts.push(`That's the end of the main line — well done!`);
+      }
+      const coachMsg = parts.join("\n\n");
+
+      // Keep audio concise — speak only the bare move sequence, not the full annotation,
+      // so playback stays snappy and doesn't drone on.
+      const spokenMsg = nextUserMove
         ? `Good — ${userSan}. I played ${computerSan}. Now play ${nextUserMove}.`
         : `Good — ${userSan}. I played ${computerSan}. That's the end of the main line — well done!`;
 
@@ -298,7 +340,7 @@ export default function Lesson() {
           { role: "coach" as const, content: coachMsg },
         ],
       }));
-      playAudio(coachMsg);
+      playAudio(spokenMsg);
     }, 600);
 
     return true;
