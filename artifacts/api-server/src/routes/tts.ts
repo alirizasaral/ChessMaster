@@ -3,8 +3,11 @@ import { TextToSpeechBody } from "@workspace/api-zod";
 
 const router = Router();
 
-const ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // "Rachel" - calm, soothing narrator voice
-const ELEVENLABS_MODEL_ID = "eleven_turbo_v2";
+// OpenAI TTS — "nova" is a warm, calm female voice that fits a chess coach.
+// Model "tts-1" is the fast, cheaper option (good enough for short lesson lines);
+// "tts-1-hd" is higher quality but slower and pricier.
+const OPENAI_VOICE = "nova";
+const OPENAI_MODEL = "tts-1";
 
 router.post("/tts", async (req, res) => {
   const parseResult = TextToSpeechBody.safeParse(req.body);
@@ -15,38 +18,32 @@ router.post("/tts", async (req, res) => {
 
   const { text } = parseResult.data;
 
-  if (!process.env.ELEVENLABS_API_KEY) {
-    res.status(500).json({ error: "ELEVENLABS_API_KEY is not configured" });
+  if (!process.env.OPENAI_API_KEY) {
+    res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
     return;
   }
 
   try {
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
-      {
-        method: "POST",
-        headers: {
-          "xi-api-key": process.env.ELEVENLABS_API_KEY,
-          "Content-Type": "application/json",
-          Accept: "audio/mpeg",
-        },
-        body: JSON.stringify({
-          text,
-          model_id: ELEVENLABS_MODEL_ID,
-          voice_settings: {
-            stability: 0.85,
-            similarity_boost: 0.6,
-            style: 0.0,
-            use_speaker_boost: false,
-          },
-        }),
-      }
-    );
+    const response = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+        Accept: "audio/mpeg",
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        voice: OPENAI_VOICE,
+        input: text,
+        response_format: "mp3",
+        speed: 0.95,
+      }),
+    });
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error(`ElevenLabs error status=${response.status} body=${errText}`);
-      res.status(500).json({ error: `ElevenLabs error: ${errText}` });
+      console.error(`OpenAI TTS error status=${response.status} body=${errText}`);
+      res.status(500).json({ error: `OpenAI TTS error: ${errText}` });
       return;
     }
 
