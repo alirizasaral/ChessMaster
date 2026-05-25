@@ -237,7 +237,7 @@ export default function Lesson() {
     toast({ title: "Lesson marked as finished!" });
   };
 
-  const isFirstLesson = lesson.moves.length === 0 && lesson.chat.length === 0;
+  const isFirstLesson = lesson.moves.length === 0;
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
