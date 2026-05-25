@@ -3,12 +3,24 @@ import { useParams, Link } from "wouter";
 import { Chess, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { useStore } from "@/hooks/use-store";
-import { useGetCoachFeedback } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Undo2, Check, Volume2, VolumeX, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { checkOpeningMove, OPENINGS } from "@/lib/openings";
 
 type ChatMessage = { role: "user" | "coach"; content: string; moveNumber?: number };
+
+// Convert a SAN string into the from/to squares for the current position, so we can auto-play it.
+function sanToMove(fen: string, san: string): { from: Square; to: Square; promotion?: string } | null {
+  const g = new Chess(fen);
+  try {
+    const m = g.move(san);
+    if (!m) return null;
+    return { from: m.from as Square, to: m.to as Square, promotion: m.promotion };
+  } catch {
+    return null;
+  }
+}
 
 const FIRST_MOVE_HINTS: Record<string, { square: Square; move: string; tip: string }> = {
   "italian-game":     { square: "e2", move: "1. e4", tip: "Push the e-pawn two squares to control the center." },
@@ -31,11 +43,25 @@ export default function Lesson() {
   const [boardWidth, setBoardWidth] = useState(() => Math.min(window.innerWidth - 48, 360));
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
   const [optionSquares, setOptionSquares] = useState<Record<string, React.CSSProperties>>({});
+  const [isComputerThinking, setIsComputerThinking] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pendingReplyRef = useRef<number | null>(null);
 
-  const coachMutation = useGetCoachFeedback();
+  // Cancel any pending auto-reply when the lesson changes or component unmounts.
+  // Also reset selection + thinking state so the next lesson session starts clean.
+  useEffect(() => {
+    return () => {
+      if (pendingReplyRef.current !== null) {
+        window.clearTimeout(pendingReplyRef.current);
+        pendingReplyRef.current = null;
+      }
+      setIsComputerThinking(false);
+      setSelectedSquare(null);
+      setOptionSquares({});
+    };
+  }, [lessonId]);
 
   const playAudio = useCallback(async (text: string) => {
     if (!soundEnabled) return;
@@ -129,8 +155,9 @@ export default function Lesson() {
   };
 
   const executeMove = (from: Square, to: Square) => {
-    if (coachMutation.isPending) return false;
+    if (isComputerThinking) return false;
 
+    const movesBefore = game.history();
     const gameCopy = new Chess(game.fen());
     let result;
     try {
@@ -141,53 +168,129 @@ export default function Lesson() {
 
     if (!result) return false;
 
+    const userSan = result.san;
+    const afterUserFen = gameCopy.fen();
+
     setGame(gameCopy);
     clearSelection();
 
-    const newFen = gameCopy.fen();
-    const moveHistory = gameCopy.history();
-    const lastMove = result.san;
+    // Check whether the user's move follows the opening's main line.
+    const check = checkOpeningMove(lessonId, movesBefore, userSan);
 
+    // Helper: post chat + persist current FEN/moves
+    const pushUserAndCoach = (coachContent: string, finalFen: string, finalMoves: string[]) => {
+      updateLesson(lessonId, (l) => ({
+        ...l,
+        fen: finalFen,
+        moves: finalMoves,
+        status: l.status === "not_started" ? "started" : l.status,
+        chat: [
+          ...l.chat,
+          { role: "user" as const, content: `Played ${userSan}`, moveNumber: movesBefore.length + 1 },
+          { role: "coach" as const, content: coachContent },
+        ],
+      }));
+      playAudio(coachContent);
+    };
+
+    // Off-line: gently correct the user. Don't auto-play.
+    if (!check || check.kind === "off_line") {
+      const expected = check && check.kind === "off_line" ? check.expected : null;
+      const msg = expected
+        ? `That's not the main line of the ${lesson.name}. The recommended move here is ${expected}. Tap undo and try again.`
+        : `You're past the main line I know — feel free to keep playing or tap undo to revisit.`;
+      setGame(gameCopy);
+      pushUserAndCoach(msg, afterUserFen, gameCopy.history());
+      return true;
+    }
+
+    // On-line: lesson complete?
+    if (check.isComplete) {
+      const opening = OPENINGS[lessonId];
+      const msg = opening
+        ? `Excellent — ${userSan} is correct. ${opening.finalNote}`
+        : `Excellent — ${userSan} is correct. You've completed this line!`;
+      setGame(gameCopy);
+      pushUserAndCoach(msg, afterUserFen, gameCopy.history());
+      return true;
+    }
+
+    // On-line with a computer reply to play.
+    const computerSan = check.nextComputerMove!;
+    const nextUserMove = check.nextUserMove;
+
+    // Show the user's move immediately and mark the computer as thinking.
     updateLesson(lessonId, (l) => ({
       ...l,
-      fen: newFen,
-      moves: moveHistory,
+      fen: afterUserFen,
+      moves: gameCopy.history(),
       status: l.status === "not_started" ? "started" : l.status,
       chat: [
         ...l.chat,
-        { role: "user" as const, content: `Played ${lastMove}`, moveNumber: moveHistory.length },
+        { role: "user" as const, content: `Played ${userSan}`, moveNumber: movesBefore.length + 1 },
       ],
     }));
+    setIsComputerThinking(true);
 
-    coachMutation.mutate(
-      { data: { lessonId, lessonName: lesson.name, fen: newFen, moves: moveHistory, lastMove } },
-      {
-        onSuccess: (res) => {
-          updateLesson(lessonId, (l) => ({
-            ...l,
-            chat: [...l.chat, { role: "coach" as const, content: res.feedback }],
-          }));
-          playAudio(res.feedback);
-        },
-        onError: () => {
-          toast({ title: "Couldn't get coaching feedback", variant: "destructive" });
-        },
+    // Capture the lesson id for the deferred updateLesson call.
+    const scheduledLessonId = lessonId;
+    const scheduledFen = afterUserFen;
+
+    // Clear any prior pending reply before scheduling a new one.
+    // (The useEffect cleanup also clears this on lessonId change / unmount,
+    //  so a stale timeout cannot fire against the wrong lesson.)
+    if (pendingReplyRef.current !== null) {
+      window.clearTimeout(pendingReplyRef.current);
+    }
+
+    // Auto-play the computer's reply after a short delay so it feels natural.
+    pendingReplyRef.current = window.setTimeout(() => {
+      pendingReplyRef.current = null;
+
+      const computerMove = sanToMove(scheduledFen, computerSan);
+      if (!computerMove) {
+        setIsComputerThinking(false);
+        toast({ title: `Couldn't play computer move ${computerSan}`, variant: "destructive" });
+        return;
       }
-    );
+      const afterComputer = new Chess(scheduledFen);
+      afterComputer.move(computerMove);
+      const finalFen = afterComputer.fen();
+      const finalMoves = afterComputer.history();
+
+      const coachMsg = nextUserMove
+        ? `Good — ${userSan}. I played ${computerSan}. Now play ${nextUserMove}.`
+        : `Good — ${userSan}. I played ${computerSan}. That's the end of the main line — well done!`;
+
+      setGame(afterComputer);
+      setIsComputerThinking(false);
+      updateLesson(scheduledLessonId, (l) => ({
+        ...l,
+        fen: finalFen,
+        moves: finalMoves,
+        chat: [
+          ...l.chat,
+          { role: "coach" as const, content: coachMsg },
+        ],
+      }));
+      playAudio(coachMsg);
+    }, 600);
 
     return true;
   };
 
   // Click interaction (react-chessboard v5 signature: { piece, square })
   const handleSquareClick = ({ square }: { square: string }) => {
-    if (coachMutation.isPending) return;
+    if (isComputerThinking) return;
+    // User always plays White — never let them touch Black pieces or move when it's not White's turn.
+    if (game.turn() !== "w") return;
     const sq = square as Square;
 
     const piece = game.get(sq);
 
-    // Nothing selected yet — select if it's the current player's piece
+    // Nothing selected yet — select only White pieces
     if (!selectedSquare) {
-      if (piece && piece.color === game.turn()) {
+      if (piece && piece.color === "w") {
         setSelectedSquare(sq);
         setOptionSquares(getMoveOptions(sq));
       }
@@ -200,8 +303,8 @@ export default function Lesson() {
       return;
     }
 
-    // Clicking another own piece → reselect
-    if (piece && piece.color === game.turn()) {
+    // Clicking another own White piece → reselect
+    if (piece && piece.color === "w") {
       setSelectedSquare(sq);
       setOptionSquares(getMoveOptions(sq));
       return;
@@ -225,20 +328,28 @@ export default function Lesson() {
   }) => {
     clearSelection();
     if (!targetSquare) return false;
+    if (isComputerThinking) return false;
+    if (game.turn() !== "w") return false;
     return executeMove(sourceSquare as Square, targetSquare as Square);
   };
 
   const handleUndo = () => {
+    if (isComputerThinking) return;
     const gameCopy = new Chess(game.fen());
-    const result = gameCopy.undo();
-    if (!result) return;
+    // Undo the computer's reply (if any) AND the user's move so it's the user's turn again.
+    const firstUndo = gameCopy.undo();
+    if (!firstUndo) return;
+    // If it's now Black to move, that means we only popped a Black (computer) move — also pop the White (user) move.
+    if (gameCopy.turn() === "b") {
+      gameCopy.undo();
+    }
 
     setGame(gameCopy);
     clearSelection();
 
     updateLesson(lessonId, (l) => {
       const newChat = [...l.chat];
-      // Remove last coach + user pair
+      // Remove last coach + user pair from chat
       if (newChat.length >= 1 && newChat[newChat.length - 1].role === "coach") newChat.pop();
       if (newChat.length >= 1 && newChat[newChat.length - 1].role === "user") newChat.pop();
       return { ...l, fen: gameCopy.fen(), moves: gameCopy.history(), chat: newChat };
@@ -379,11 +490,11 @@ export default function Lesson() {
             </div>
           ))}
 
-          {coachMutation.isPending && (
+          {isComputerThinking && (
             <div className="flex max-w-[85%] mr-auto items-start">
               <div className="px-4 py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Coach is thinking...</span>
+                <span>Coach is replying...</span>
               </div>
             </div>
           )}
