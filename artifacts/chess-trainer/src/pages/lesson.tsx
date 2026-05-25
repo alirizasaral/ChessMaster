@@ -323,12 +323,6 @@ export default function Lesson() {
       }
       const coachMsg = parts.join("\n\n");
 
-      // Keep audio concise — speak only the bare move sequence, not the full annotation,
-      // so playback stays snappy and doesn't drone on.
-      const spokenMsg = nextUserMove
-        ? `Good — ${userSan}. I played ${computerSan}. Now play ${nextUserMove}.`
-        : `Good — ${userSan}. I played ${computerSan}. That's the end of the main line — well done!`;
-
       setGame(afterComputer);
       setIsComputerThinking(false);
       updateLesson(scheduledLessonId, (l) => ({
@@ -340,7 +334,7 @@ export default function Lesson() {
           { role: "coach" as const, content: coachMsg },
         ],
       }));
-      playAudio(spokenMsg);
+      playAudio(coachMsg);
     }, 600);
 
     return true;
