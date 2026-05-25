@@ -175,7 +175,11 @@ export default function Lesson() {
   const executeMove = (from: Square, to: Square) => {
     if (isComputerThinking) return false;
 
-    const movesBefore = game.history();
+    // Use the persisted move list as the source of truth — `game.history()` returns
+    // [] after the board is hydrated from a FEN on page reload (chess.js can't
+    // reconstruct history from FEN alone), which would otherwise make every move
+    // after a reload look "off-line" and skip the computer reply.
+    const movesBefore = lesson.moves;
     const gameCopy = new Chess(game.fen());
     let result;
     try {
@@ -191,6 +195,9 @@ export default function Lesson() {
 
     setGame(gameCopy);
     clearSelection();
+
+    // Full move list after the user's move (persisted source of truth).
+    const movesAfterUser = [...movesBefore, userSan];
 
     // Check whether the user's move follows the opening's main line.
     const check = checkOpeningMove(lessonId, movesBefore, userSan);
@@ -218,7 +225,7 @@ export default function Lesson() {
         ? `That's not the main line of the ${lesson.name}. The recommended move here is ${expected}. Tap undo and try again.`
         : `You're past the main line I know — feel free to keep playing or tap undo to revisit.`;
       setGame(gameCopy);
-      pushUserAndCoach(msg, afterUserFen, gameCopy.history());
+      pushUserAndCoach(msg, afterUserFen, movesAfterUser);
       return true;
     }
 
@@ -229,7 +236,7 @@ export default function Lesson() {
         ? `Excellent — ${userSan} is correct. ${opening.finalNote}`
         : `Excellent — ${userSan} is correct. You've completed this line!`;
       setGame(gameCopy);
-      pushUserAndCoach(msg, afterUserFen, gameCopy.history());
+      pushUserAndCoach(msg, afterUserFen, movesAfterUser);
       return true;
     }
 
@@ -241,7 +248,7 @@ export default function Lesson() {
     updateLesson(lessonId, (l) => ({
       ...l,
       fen: afterUserFen,
-      moves: gameCopy.history(),
+      moves: movesAfterUser,
       status: l.status === "not_started" ? "started" : l.status,
       chat: [
         ...l.chat,
@@ -274,7 +281,7 @@ export default function Lesson() {
       const afterComputer = new Chess(scheduledFen);
       afterComputer.move(computerMove);
       const finalFen = afterComputer.fen();
-      const finalMoves = afterComputer.history();
+      const finalMoves = [...movesAfterUser, computerSan];
 
       const coachMsg = nextUserMove
         ? `Good — ${userSan}. I played ${computerSan}. Now play ${nextUserMove}.`
@@ -353,16 +360,31 @@ export default function Lesson() {
 
   const handleUndo = () => {
     if (isComputerThinking) return;
-    const gameCopy = new Chess(game.fen());
-    // Undo the computer's reply (if any) AND the user's move so it's the user's turn again.
-    const firstUndo = gameCopy.undo();
-    if (!firstUndo) return;
-    // If it's now Black to move, that means we only popped a Black (computer) move — also pop the White (user) move.
-    if (gameCopy.turn() === "b") {
-      gameCopy.undo();
+    // Source of truth for history is `lesson.moves` (not `game.history()`, which
+    // is empty after the board is hydrated from a FEN on reload).
+    if (lesson.moves.length === 0) return;
+
+    // Pop the computer's reply (if the last move was Black) AND the user's move,
+    // so it's the user's turn again after undo. For an off-line user move (no
+    // computer reply played), only the user's move gets popped.
+    const newMoves = [...lesson.moves];
+    // Replay from the start to determine whose turn it is at the end.
+    const replay = new Chess();
+    newMoves.forEach((m) => replay.move(m));
+    if (replay.turn() === "w") {
+      // Last move was Black (computer) — pop both Black and White.
+      newMoves.pop();
+      newMoves.pop();
+    } else {
+      // Last move was White (user off-line) — pop just it.
+      newMoves.pop();
     }
 
-    setGame(gameCopy);
+    // Rebuild the chess position from the trimmed move list.
+    const rebuilt = new Chess();
+    newMoves.forEach((m) => rebuilt.move(m));
+
+    setGame(rebuilt);
     clearSelection();
 
     updateLesson(lessonId, (l) => {
@@ -370,7 +392,7 @@ export default function Lesson() {
       // Remove last coach + user pair from chat
       if (newChat.length >= 1 && newChat[newChat.length - 1].role === "coach") newChat.pop();
       if (newChat.length >= 1 && newChat[newChat.length - 1].role === "user") newChat.pop();
-      return { ...l, fen: gameCopy.fen(), moves: gameCopy.history(), chat: newChat };
+      return { ...l, fen: rebuilt.fen(), moves: newMoves, chat: newChat };
     });
   };
 
