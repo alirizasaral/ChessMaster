@@ -45,6 +45,7 @@ router.post("/tts", async (req, res) => {
 
     if (!response.ok) {
       const errText = await response.text();
+      console.error(`ElevenLabs error status=${response.status} body=${errText}`);
       res.status(500).json({ error: `ElevenLabs error: ${errText}` });
       return;
     }
