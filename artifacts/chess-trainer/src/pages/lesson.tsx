@@ -312,7 +312,7 @@ export default function Lesson() {
       >
         <div
           className="rounded-sm overflow-hidden shadow-md"
-          style={{ width: boardWidth, height: boardWidth, flexShrink: 0 }}
+          style={{ width: boardWidth, flexShrink: 0 }}
         >
           <Chessboard
             position={game.fen()}
