@@ -55,6 +55,13 @@ export function useRealtimeCoach() {
   const dcRef = useRef<RTCDataChannel | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
+  // Ref mirror of `isAssistantSpeaking` so callbacks see the latest value
+  // without needing to be recreated on every change.
+  const isSpeakingRef = useRef(false);
+  // Tracks whether a response is currently in flight — set true the moment
+  // we send `response.create` (so we can cancel even before audio starts
+  // streaming), and reset on response lifecycle terminators.
+  const responseActiveRef = useRef(false);
 
   const disconnect = useCallback(() => {
     if (dcRef.current) {
@@ -75,8 +82,32 @@ export function useRealtimeCoach() {
       audioElRef.current = null;
     }
     setStatus("idle");
+    isSpeakingRef.current = false;
+    responseActiveRef.current = false;
     setIsAssistantSpeaking(false);
     setMicMutedState(false);
+  }, []);
+
+  /**
+   * Cancel any in-flight assistant response so the coach stops speaking
+   * immediately. Gated on `responseActiveRef` (not on speaking) so we still
+   * cancel a response that's been requested but hasn't started streaming
+   * audio yet — otherwise the stale reply would arrive and play after the
+   * board state has already moved on (e.g. after a reset or rapid move).
+   * Safe no-op when no response is in flight.
+   */
+  const interruptAssistant = useCallback(() => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") return;
+    if (!responseActiveRef.current) return;
+    try {
+      dc.send(JSON.stringify({ type: "response.cancel" }));
+    } catch {
+      /* noop */
+    }
+    responseActiveRef.current = false;
+    isSpeakingRef.current = false;
+    setIsAssistantSpeaking(false);
   }, []);
 
   const connect = useCallback(async () => {
@@ -157,10 +188,14 @@ export function useRealtimeCoach() {
         try {
           const evt = JSON.parse(e.data) as { type?: string };
           // Track speaking state so the UI can show a "speaking" indicator.
-          if (
+          if (evt.type === "response.created") {
+            responseActiveRef.current = true;
+          } else if (
             evt.type === "response.audio.delta" ||
             evt.type === "response.output_audio.delta"
           ) {
+            responseActiveRef.current = true;
+            isSpeakingRef.current = true;
             setIsAssistantSpeaking(true);
           } else if (
             evt.type === "response.done" ||
@@ -168,6 +203,8 @@ export function useRealtimeCoach() {
             evt.type === "response.output_audio.done" ||
             evt.type === "response.cancelled"
           ) {
+            responseActiveRef.current = false;
+            isSpeakingRef.current = false;
             setIsAssistantSpeaking(false);
           } else if (evt.type === "error") {
             console.error("Realtime API error:", evt);
@@ -239,6 +276,22 @@ export function useRealtimeCoach() {
   const commentOnMove = useCallback((context: string) => {
     const dc = dcRef.current;
     if (!dc || dc.readyState !== "open") return;
+    // Interrupt any in-flight response (speaking OR just-requested but not
+    // streaming yet) so we react to the latest move instead of finishing
+    // yesterday's joke or letting a stale reply land after a reset.
+    if (responseActiveRef.current) {
+      try {
+        dc.send(JSON.stringify({ type: "response.cancel" }));
+      } catch {
+        /* noop */
+      }
+      responseActiveRef.current = false;
+      isSpeakingRef.current = false;
+      setIsAssistantSpeaking(false);
+    }
+    // Mark the new response as active immediately — sending response.create
+    // makes one in-flight even before the server echoes response.created.
+    responseActiveRef.current = true;
     dc.send(
       JSON.stringify({
         type: "response.create",
@@ -282,6 +335,7 @@ export function useRealtimeCoach() {
     connect,
     disconnect,
     commentOnMove,
+    interruptAssistant,
     setMicMuted,
   };
 }

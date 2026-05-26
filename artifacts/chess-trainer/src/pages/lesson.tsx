@@ -13,6 +13,7 @@ import {
   MicOff,
   PhoneCall,
   PhoneOff,
+  RotateCcw,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { checkOpeningMove, OPENINGS } from "@/lib/openings";
@@ -44,7 +45,7 @@ const FIRST_MOVE_HINTS: Record<string, { square: Square; move: string; tip: stri
 
 export default function Lesson() {
   const { lessonId } = useParams();
-  const { state, updateLesson } = useStore();
+  const { state, updateLesson, resetLesson } = useStore();
   const { toast } = useToast();
 
   const lesson = lessonId ? state.lessons[lessonId] : null;
@@ -57,6 +58,7 @@ export default function Lesson() {
     connect: connectVoice,
     disconnect: disconnectVoice,
     commentOnMove,
+    interruptAssistant,
     setMicMuted,
   } = useRealtimeCoach();
 
@@ -521,6 +523,9 @@ export default function Lesson() {
     setGame(rebuilt);
     clearSelection();
 
+    // Capture which moves were taken back so the coach can react to the undo.
+    const undoneMoves = lesson.moves.slice(newMoves.length);
+
     updateLesson(lessonId, (l) => {
       const newChat = [...l.chat];
       // Remove last coach + user pair from chat
@@ -528,6 +533,44 @@ export default function Lesson() {
       if (newChat.length >= 1 && newChat[newChat.length - 1].role === "user") newChat.pop();
       return { ...l, fen: rebuilt.fen(), moves: newMoves, chat: newChat };
     });
+
+    // Tell the coach what was taken back so she can interrupt and react.
+    if (undoneMoves.length > 0) {
+      const description =
+        undoneMoves.length === 2
+          ? `your reply ${undoneMoves[1]} and the student's move ${undoneMoves[0]}`
+          : `the student's move ${undoneMoves[0]}`;
+      commentOnMove(
+        `Lesson: ${lesson.name}. The student tapped undo and took back ${description}. ` +
+        `The position is back to before that. React briefly to the takeback.`,
+      );
+    }
+  };
+
+  const handleReset = () => {
+    if (!lessonId) return;
+    const ok = window.confirm(
+      `Reset "${lesson.name}"? Your moves and chat history for this lesson will be wiped.`,
+    );
+    if (!ok) return;
+
+    // Cancel any pending engine reply so it can't fire against the reset state.
+    if (pendingReplyRef.current !== null) {
+      window.clearTimeout(pendingReplyRef.current);
+      pendingReplyRef.current = null;
+    }
+    setIsComputerThinking(false);
+    clearSelection();
+    setGame(new Chess());
+
+    resetLesson(lessonId);
+
+    // If the coach is mid-sentence, cut her off and let her react to the reset.
+    interruptAssistant();
+    commentOnMove(
+      `Lesson: ${lesson.name}. The student just reset the lesson — the board is back to the starting position. ` +
+      `Make a short remark about starting over.`,
+    );
   };
 
   const handleFinish = () => {
@@ -616,6 +659,17 @@ export default function Lesson() {
             data-testid="button-undo"
           >
             <Undo2 className="w-5 h-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleReset}
+            disabled={lesson.moves.length === 0 && lesson.status === "not_started"}
+            className="text-muted-foreground hover:text-destructive"
+            title="Reset lesson"
+            data-testid="button-reset"
+          >
+            <RotateCcw className="w-5 h-5" />
           </Button>
           <Button
             variant="ghost"

@@ -38,7 +38,13 @@ export interface AppState {
   settings: AppSettings;
 }
 
-const INITIAL_LESSONS = [
+interface LessonDef {
+  id: string;
+  name: string;
+  description: string;
+}
+
+const INITIAL_LESSONS: LessonDef[] = [
   {
     id: "italian-game",
     name: "Italian Game",
@@ -73,17 +79,21 @@ const INITIAL_LESSONS = [
 
 const DEFAULT_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
+function buildFreshLesson(def: LessonDef): LessonData {
+  return {
+    ...def,
+    status: "not_started",
+    fen: DEFAULT_FEN,
+    moves: [],
+    chat: [{ role: "coach", content: buildWelcomeMessage(def.id, def.name) }],
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
 const createInitialState = (): AppState => {
   const lessons: Record<string, LessonData> = {};
   INITIAL_LESSONS.forEach((lesson) => {
-    lessons[lesson.id] = {
-      ...lesson,
-      status: "not_started",
-      fen: DEFAULT_FEN,
-      moves: [],
-      chat: [{ role: "coach", content: buildWelcomeMessage(lesson.id, lesson.name) }],
-      lastUpdated: new Date().toISOString(),
-    };
+    lessons[lesson.id] = buildFreshLesson(lesson);
   });
 
   return {
@@ -134,9 +144,35 @@ export function useStore() {
     }));
   }, []);
 
+  const resetLesson = useCallback((id: string) => {
+    setState((prev) => {
+      const def = INITIAL_LESSONS.find((l) => l.id === id);
+      if (!def) return prev;
+      return {
+        ...prev,
+        lessons: {
+          ...prev.lessons,
+          [id]: buildFreshLesson(def),
+        },
+      };
+    });
+  }, []);
+
+  const resetAllLessons = useCallback(() => {
+    setState((prev) => {
+      const lessons: Record<string, LessonData> = {};
+      INITIAL_LESSONS.forEach((def) => {
+        lessons[def.id] = buildFreshLesson(def);
+      });
+      return { ...prev, lessons };
+    });
+  }, []);
+
   return {
     state,
     updateLesson,
     toggleSound,
+    resetLesson,
+    resetAllLessons,
   };
 }

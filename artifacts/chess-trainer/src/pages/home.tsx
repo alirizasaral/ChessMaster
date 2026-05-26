@@ -2,18 +2,46 @@ import { Link } from "wouter";
 import { useStore } from "@/hooks/use-store";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Play, CheckCircle2, RotateCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Play, CheckCircle2, RotateCcw, Heart, Trash2 } from "lucide-react";
 
 export default function Home() {
-  const { state } = useStore();
+  const { state, resetAllLessons } = useStore();
+
+  const handleResetAll = () => {
+    const ok = window.confirm(
+      "Reset progress on ALL lessons? Your moves, chat history, and completion status will be wiped.",
+    );
+    if (ok) resetAllLessons();
+  };
+
+  const anyStarted = Object.values(state.lessons).some((l) => l.status !== "not_started");
 
   return (
     <div className="min-h-[100dvh] w-full bg-background">
-      <div className="max-w-2xl mx-auto p-4 md:p-6 lg:p-8 space-y-8">
+      <div className="max-w-2xl mx-auto p-4 md:p-6 lg:p-8 space-y-6">
         <header className="space-y-2 py-4">
           <h1 className="text-3xl font-serif text-primary tracking-tight">Chess Opening Trainer</h1>
           <p className="text-muted-foreground text-lg">Master the most essential openings move by move.</p>
         </header>
+
+        {/* Donation note */}
+        <div className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground flex items-start gap-3">
+          <Heart className="w-4 h-4 mt-0.5 text-primary shrink-0" />
+          <p className="leading-relaxed">
+            This is a hobby project. If you enjoy it, you can help cover hosting and API costs at{" "}
+            <a
+              href="https://buymeacoffee.com/alirizasara"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary font-medium underline underline-offset-2 hover:text-primary/80"
+              data-testid="link-donate"
+            >
+              buymeacoffee.com/alirizasara
+            </a>
+            . Thank you!
+          </p>
+        </div>
 
         <main className="grid gap-4">
           {Object.values(state.lessons).map((lesson) => (
@@ -66,6 +94,21 @@ export default function Home() {
             </Link>
           ))}
         </main>
+
+        {anyStarted && (
+          <div className="flex justify-center pt-2 pb-6">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleResetAll}
+              className="text-muted-foreground hover:text-destructive"
+              data-testid="button-reset-all"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Reset all progress
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
