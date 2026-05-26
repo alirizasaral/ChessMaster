@@ -20,6 +20,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 type Status = "idle" | "connecting" | "connected" | "error";
 
+// SDP exchange endpoint for OpenAI Realtime GA. (The beta endpoint
+// `/v1/realtime` was retired alongside the beta sessions API.)
+const REALTIME_SDP_URL = "https://api.openai.com/v1/realtime/calls";
+
 const COACH_PERSONA = `You are a snarky, theatrical chess grandmaster coaching a beginner who is practicing classical openings. \
 You play Black against them. After every move (theirs or yours), deliver ONE or TWO short, witty, lightly ridiculing sentences — \
 like a pro wrestler's trash talk crossed with a chess commentator. Be playful, never mean-spirited or vulgar. Vary your jokes: \
@@ -30,6 +34,7 @@ export function useRealtimeCoach() {
   const [status, setStatus] = useState<Status>("idle");
   const [isMicMuted, setMicMutedState] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -62,6 +67,7 @@ export function useRealtimeCoach() {
   const connect = useCallback(async () => {
     if (status === "connecting" || status === "connected") return;
     setStatus("connecting");
+    setLastError(null);
 
     try {
       // 1) Get an ephemeral session key from our server.
@@ -181,7 +187,7 @@ export function useRealtimeCoach() {
       await pc.setLocalDescription(offer);
 
       const sdpResp = await fetch(
-        `https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`,
+        `${REALTIME_SDP_URL}?model=${encodeURIComponent(model)}`,
         {
           method: "POST",
           body: offer.sdp,
@@ -201,7 +207,9 @@ export function useRealtimeCoach() {
       setStatus("connected");
     } catch (err) {
       console.error("Realtime connect failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
       disconnect();
+      setLastError(message);
       setStatus("error");
     }
   }, [status, disconnect]);
@@ -252,6 +260,7 @@ export function useRealtimeCoach() {
     status,
     isMicMuted,
     isAssistantSpeaking,
+    lastError,
     connect,
     disconnect,
     commentOnMove,

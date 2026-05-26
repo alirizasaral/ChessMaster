@@ -53,6 +53,7 @@ export default function Lesson() {
     status: voiceStatus,
     isMicMuted,
     isAssistantSpeaking,
+    lastError: voiceError,
     connect: connectVoice,
     disconnect: disconnectVoice,
     commentOnMove,
@@ -68,15 +69,16 @@ export default function Lesson() {
   };
 
   // Show a toast if connecting fails (status flips to "error" inside the hook).
+  // Include the real error message so on-device failures are debuggable.
   useEffect(() => {
     if (voiceStatus === "error") {
       toast({
         title: "Couldn't start the voice coach",
-        description: "Check your microphone permission and try again.",
+        description: voiceError ?? "Check your microphone permission and try again.",
         variant: "destructive",
       });
     }
-  }, [voiceStatus, toast]);
+  }, [voiceStatus, voiceError, toast]);
 
   const [game, setGame] = useState(new Chess());
   const [boardWidth, setBoardWidth] = useState(() => Math.min(window.innerWidth - 48, 360));
