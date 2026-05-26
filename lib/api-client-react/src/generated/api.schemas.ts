@@ -21,21 +21,6 @@ export interface CoachResponse {
   feedback: string;
 }
 
-export interface QuipRequest {
-  lessonName: string;
-  userMove: string;
-  moveNumber: number;
-  recentMoves?: string[];
-}
-
-export interface QuipResponse {
-  quip: string;
-}
-
-export interface TtsRequest {
-  text: string;
-}
-
 export interface ErrorResponse {
   error: string;
 }

@@ -1,13 +1,23 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "wouter";
 import { Chess, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { useStore } from "@/hooks/use-store";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Undo2, Check, Volume2, VolumeX, Loader2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Undo2,
+  Check,
+  Loader2,
+  Mic,
+  MicOff,
+  PhoneCall,
+  PhoneOff,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { checkOpeningMove, OPENINGS } from "@/lib/openings";
 import { pickEngineMoveSan, describeGameOver } from "@/lib/engine";
+import { useRealtimeCoach } from "@/lib/use-realtime";
 
 type ChatMessage = { role: "user" | "coach"; content: string; moveNumber?: number };
 
@@ -34,11 +44,39 @@ const FIRST_MOVE_HINTS: Record<string, { square: Square; move: string; tip: stri
 
 export default function Lesson() {
   const { lessonId } = useParams();
-  const { state, updateLesson, toggleSound } = useStore();
+  const { state, updateLesson } = useStore();
   const { toast } = useToast();
 
   const lesson = lessonId ? state.lessons[lessonId] : null;
-  const soundEnabled = state.settings.sound;
+
+  const {
+    status: voiceStatus,
+    isMicMuted,
+    isAssistantSpeaking,
+    connect: connectVoice,
+    disconnect: disconnectVoice,
+    commentOnMove,
+    setMicMuted,
+  } = useRealtimeCoach();
+
+  const handleToggleVoice = async () => {
+    if (voiceStatus === "connected" || voiceStatus === "connecting") {
+      disconnectVoice();
+      return;
+    }
+    await connectVoice();
+  };
+
+  // Show a toast if connecting fails (status flips to "error" inside the hook).
+  useEffect(() => {
+    if (voiceStatus === "error") {
+      toast({
+        title: "Couldn't start the voice coach",
+        description: "Check your microphone permission and try again.",
+        variant: "destructive",
+      });
+    }
+  }, [voiceStatus, toast]);
 
   const [game, setGame] = useState(new Chess());
   const [boardWidth, setBoardWidth] = useState(() => Math.min(window.innerWidth - 48, 360));
@@ -81,25 +119,6 @@ export default function Lesson() {
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lessonId]);
-
-  const playAudio = useCallback(async (text: string) => {
-    if (!soundEnabled) return;
-    try {
-      const BASE_URL = import.meta.env.BASE_URL;
-      const response = await fetch(`${BASE_URL}api/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!response.ok) throw new Error("TTS failed");
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.play();
-    } catch (e) {
-      console.error("Audio error:", e);
-    }
-  }, [soundEnabled]);
 
   // Init game from saved FEN
   useEffect(() => {
@@ -216,7 +235,10 @@ export default function Lesson() {
           { role: "coach" as const, content: coachContent },
         ],
       }));
-      playAudio(coachContent);
+      commentOnMove(
+        `Lesson: ${lesson.name}. The student just played ${userSan} (move ${movesBefore.length + 1}). ` +
+        `On-screen coach note: ${coachContent}`,
+      );
     };
 
     // Off-line: gently correct the user. Don't auto-play.
@@ -267,23 +289,7 @@ export default function Lesson() {
         window.clearTimeout(pendingReplyRef.current);
       }
 
-      // Kick off a witty trash-talk quip in parallel with the engine think.
-      // We don't block on it — if it's slow or fails, we just skip the quip.
-      const quipPromise: Promise<string | null> = fetch(`${import.meta.env.BASE_URL}api/quip`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lessonName: lesson.name,
-          userMove: userSan,
-          moveNumber: movesBefore.length + 1,
-          recentMoves: movesAfterUser,
-        }),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j: { quip?: string } | null) => (j?.quip ? j.quip : null))
-        .catch(() => null);
-
-      pendingReplyRef.current = window.setTimeout(async () => {
+      pendingReplyRef.current = window.setTimeout(() => {
         pendingReplyRef.current = null;
 
         const engineSan = pickEngineMoveSan(scheduledFen);
@@ -296,24 +302,16 @@ export default function Lesson() {
         }
         const finalFen = afterEngine.fen();
 
-        // Wait for the quip, but cap it at 2.5s so the coach never feels stuck.
-        const quip = await Promise.race<string | null>([
-          quipPromise,
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
-        ]);
-
-        const parts: string[] = [];
-        if (quip) parts.push(quip);
-
+        let coachMsg: string;
         if (afterEngine.isGameOver()) {
-          if (engineSan) parts.push(`I played ${engineSan}.`);
-          parts.push(describeGameOver(afterEngine, lesson.name));
+          coachMsg = engineSan
+            ? `I played ${engineSan}. ${describeGameOver(afterEngine, lesson.name)}`
+            : describeGameOver(afterEngine, lesson.name);
         } else if (engineSan) {
-          parts.push(`I played ${engineSan}. Your move.`);
+          coachMsg = `I played ${engineSan}. Your move.`;
         } else {
-          parts.push(`I have no legal moves. ${describeGameOver(afterEngine, lesson.name)}`);
+          coachMsg = `I have no legal moves. ${describeGameOver(afterEngine, lesson.name)}`;
         }
-        const coachMsg = parts.join("\n\n");
 
         setGame(afterEngine);
         setIsComputerThinking(false);
@@ -323,7 +321,13 @@ export default function Lesson() {
           moves: finalMoves,
           chat: [...l.chat, { role: "coach" as const, content: coachMsg }],
         }));
-        playAudio(coachMsg);
+        commentOnMove(
+          `Free play in ${lesson.name}. Student played ${userSan} (move ${movesBefore.length + 1}). ` +
+          (engineSan ? `You (Black) reply with ${engineSan}. ` : `You have no legal reply. `) +
+          (afterEngine.isGameOver()
+            ? `Game over: ${describeGameOver(afterEngine, lesson.name)}`
+            : `It's their turn now.`),
+        );
       }, 600);
 
       return true;
@@ -420,7 +424,13 @@ export default function Lesson() {
           { role: "coach" as const, content: coachMsg },
         ],
       }));
-      playAudio(coachMsg);
+      commentOnMove(
+        `Lesson: ${lesson.name}. Student played ${userSan} (move ${movesBefore.length + 1}), ` +
+        `you (Black) replied with ${computerSan}. ` +
+        (nextUserMove
+          ? `Next recommended student move is ${nextUserMove}.`
+          : `That's the end of the recorded main line.`),
+      );
     }, 600);
 
     return true;
@@ -557,13 +567,44 @@ export default function Lesson() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={toggleSound}
-            className="text-muted-foreground"
-            title={soundEnabled ? "Mute" : "Unmute"}
-            data-testid="button-mute"
+            onClick={handleToggleVoice}
+            className={
+              voiceStatus === "connected"
+                ? isAssistantSpeaking
+                  ? "text-primary animate-pulse"
+                  : "text-primary"
+                : "text-muted-foreground"
+            }
+            title={
+              voiceStatus === "connected"
+                ? "End voice coach"
+                : voiceStatus === "connecting"
+                ? "Connecting…"
+                : "Start voice coach"
+            }
+            disabled={voiceStatus === "connecting"}
+            data-testid="button-voice"
           >
-            {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+            {voiceStatus === "connecting" ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : voiceStatus === "connected" ? (
+              <PhoneOff className="w-5 h-5" />
+            ) : (
+              <PhoneCall className="w-5 h-5" />
+            )}
           </Button>
+          {voiceStatus === "connected" && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMicMuted(!isMicMuted)}
+              className={isMicMuted ? "text-muted-foreground" : "text-primary"}
+              title={isMicMuted ? "Unmute microphone" : "Mute microphone"}
+              data-testid="button-mic"
+            >
+              {isMicMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
