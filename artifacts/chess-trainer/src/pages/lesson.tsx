@@ -52,12 +52,14 @@ export default function Lesson() {
 
   const {
     status: voiceStatus,
+    isReady: voiceReady,
     isMicMuted,
     isAssistantSpeaking,
     lastError: voiceError,
     connect: connectVoice,
     disconnect: disconnectVoice,
     commentOnMove,
+    speakIntro,
     interruptAssistant,
     setMicMuted,
   } = useRealtimeCoach();
@@ -69,6 +71,50 @@ export default function Lesson() {
     }
     await connectVoice();
   };
+
+  // When the voice channel becomes ready (false -> true), deliver a
+  // context-aware intro using a SNAPSHOT of the lesson at that moment:
+  // greet the student, identify the opening, and tell them the next move
+  // they should play according to the recorded mainline. Captured via refs
+  // so the effect's only real dependency is `voiceReady` — otherwise it
+  // would re-fire (and cancel ongoing move commentary) every move.
+  const lessonSnapshotRef = useRef<{ lessonId: string; name: string; moves: string[] } | null>(null);
+  useEffect(() => {
+    lessonSnapshotRef.current = lessonId && lesson
+      ? { lessonId, name: lesson.name, moves: lesson.moves }
+      : null;
+  }, [lessonId, lesson]);
+
+  useEffect(() => {
+    // When voice drops, no-op — intro will re-fire next time it becomes ready.
+    if (!voiceReady) return;
+    const snap = lessonSnapshotRef.current;
+    if (!snap) return;
+
+    const opening = OPENINGS[snap.lessonId];
+    const nextUserMove = opening?.line[snap.moves.length] ?? null;
+    const movesSoFar = snap.moves.join(" ") || "(none yet)";
+
+    if (snap.moves.length === 0) {
+      speakIntro(
+        `Greet the student for the ${snap.name} lesson. ` +
+        `Tell them the very first move they should play is ${opening?.line[0] ?? "the recommended opening move"} ` +
+        `— translate that into spoken English (e.g. "push your king's pawn two squares" for 1.e4). ` +
+        `One or two short sentences total.`,
+      );
+    } else if (nextUserMove) {
+      speakIntro(
+        `Lesson in progress: ${snap.name}. Moves played so far: ${movesSoFar}. ` +
+        `Welcome the student back and tell them the next move they should play is ${nextUserMove}. ` +
+        `Translate it into spoken English. One or two short sentences.`,
+      );
+    } else {
+      speakIntro(
+        `Lesson: ${snap.name}. The recorded mainline is finished — moves played so far: ${movesSoFar}. ` +
+        `Tell the student we're now in free play and to make any move they like. One short sentence.`,
+      );
+    }
+  }, [voiceReady, speakIntro]);
 
   // Show a toast if connecting fails (status flips to "error" inside the hook).
   // Include the real error message so on-device failures are debuggable.

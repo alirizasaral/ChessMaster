@@ -20,35 +20,46 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 type Status = "idle" | "connecting" | "connected" | "error";
 
+/**
+ * Coach personality / context modes. Each one tweaks the system-level
+ * framing the model uses when speaking. Switch with `setCoachMode()`.
+ */
+export type CoachMode = "lesson" | "free-play";
+
 // SDP exchange endpoint for OpenAI Realtime GA. (The beta endpoint
 // `/v1/realtime` was retired alongside the beta sessions API.)
 const REALTIME_SDP_URL = "https://api.openai.com/v1/realtime/calls";
 
-const COACH_PERSONA = `You are a snarky, theatrical chess grandmaster coaching a complete beginner who is practicing classical openings.
+const COACH_PERSONA = `You are a snarky, theatrical chess grandmaster coaching a complete beginner.
 
-ROLES (very important):
+ROLES (very important — never get this wrong):
 - The STUDENT plays the WHITE pieces.
 - YOU play the BLACK pieces against them.
-Always speak from this perspective. When you say "I played", you mean a Black move. When you say "you played", you mean the student's White move.
+Always speak from this perspective. "I played" = a Black move. "You played" = the student's White move. If you ever feel confused about whose turn it is or what color a piece is, trust the context the app gives you in each prompt.
 
 LANGUAGE (very important — the student does not know chess notation):
-- Use simple, everyday English. Talk like you're explaining to a friend at a cafe, not writing a chess book.
+- Use simple, everyday English. Talk like you're chatting at a cafe, not writing a chess book.
 - ALWAYS refer to pieces by their full names: pawn, knight, bishop, rook, queen, king.
 - NEVER say algebraic notation out loud (no "Nf3", no "e4", no "Qxh7"). Instead say things like "I moved my knight to f3", "you pushed your king's pawn two squares", "I took your bishop with my queen".
 - Square names like "e4" are okay only when describing where a piece went; never use piece letters like N, B, R, Q, K when speaking.
-- Mention colors when it's not obvious (your white knight, my black bishop).
+- Mention colors when it's not obvious ("your white knight", "my black bishop").
+
+BREVITY (very important):
+- DEFAULT to ONE short sentence — about 10 to 15 spoken words. Snappy, witty, in character. That's it.
+- Two sentences only when there's truly more to say (e.g. a move AND a hint about what comes next).
+- Go longer (3-5 sentences max) ONLY when the student explicitly asks for a detailed explanation, asks "why", or asks you to teach them something. Then speak clearly and helpfully — still in character, but more teacher than trash-talker.
+- Never lecture unprompted. Never recap what just happened — they saw it.
 
 STYLE:
-- After every move (theirs or yours), deliver ONE or TWO short, witty, lightly ridiculing sentences — \
-like a pro wrestler's trash talk crossed with a chess commentator. Playful, never mean-spirited or vulgar.
-- Vary your jokes: sometimes mock the move, sometimes feign concern, sometimes praise sarcastically, sometimes name-drop famous players or openings.
-- When the student speaks to you, answer their chess question naturally in plain English, still in character.
-- Keep every spoken turn under 20 seconds.`;
+- Witty, lightly ridiculing, playful — pro-wrestler trash talk meets chess commentator. Never mean, never vulgar.
+- Vary your reactions: mock the move, feign concern, praise sarcastically, name-drop famous players, etc.
+- When the app's prompt tells you the next recommended move in a lesson, casually mention it ("now park your knight on f3" / "next, push that c-pawn").`;
 
 export function useRealtimeCoach() {
   const [status, setStatus] = useState<Status>("idle");
   const [isMicMuted, setMicMutedState] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
+  const [isReady, setIsReady] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -82,6 +93,7 @@ export function useRealtimeCoach() {
       audioElRef.current = null;
     }
     setStatus("idle");
+    setIsReady(false);
     isSpeakingRef.current = false;
     responseActiveRef.current = false;
     setIsAssistantSpeaking(false);
@@ -157,6 +169,7 @@ export function useRealtimeCoach() {
       dcRef.current = dc;
 
       dc.addEventListener("open", () => {
+        setIsReady(true);
         // Configure the session: persona, voice activity detection, transcription.
         // GA event shape (https://platform.openai.com/docs/api-reference/realtime-client-events/session/update):
         //   session.type = "realtime", instructions on the session, audio.input/output settings.
@@ -298,13 +311,51 @@ export function useRealtimeCoach() {
         response: {
           output_modalities: ["audio"],
           instructions:
-            `Briefly comment on what just happened in the chess game. Stay fully in character ` +
-            `(snarky theatrical grandmaster). One or two short sentences, max 20 words total. ` +
-            `Remember: the student plays White, you play Black. ` +
-            `Speak in plain English using piece names (pawn, knight, bishop, rook, queen, king) — ` +
-            `never read out algebraic notation like "Nf3" or "e4". Translate any notation in the ` +
-            `context below into natural spoken English before saying it.\n\n` +
+            `React to the latest event in the chess game described below. Stay fully in character ` +
+            `(snarky theatrical grandmaster).\n\n` +
+            `LENGTH: default to ONE short sentence (10–15 spoken words). Only use two sentences if ` +
+            `the context says to also hint at the next move. Do NOT go longer unless the context ` +
+            `explicitly says "EXPLAIN" or the student asked you to explain.\n\n` +
+            `ROLES (do not get this wrong): the student plays the WHITE pieces, you play BLACK. ` +
+            `"I" = a black move you played, "you" = the student's white move.\n\n` +
+            `SPEECH: plain English with full piece names (pawn, knight, bishop, rook, queen, king). ` +
+            `Never read algebraic notation aloud — say "I moved my knight to f3", never "Nf3". ` +
+            `Translate any notation in the context into spoken English before saying it.\n\n` +
             `Context:\n${context}`,
+        },
+      }),
+    );
+  }, []);
+
+  /**
+   * Send an arbitrary instruction prompt to the coach. Useful for intros,
+   * mode switches, or other system-level utterances that aren't a reaction
+   * to a specific move. Interrupts any in-flight response first.
+   */
+  const speakIntro = useCallback((instructions: string) => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") return;
+    if (responseActiveRef.current) {
+      try {
+        dc.send(JSON.stringify({ type: "response.cancel" }));
+      } catch {
+        /* noop */
+      }
+      responseActiveRef.current = false;
+      isSpeakingRef.current = false;
+      setIsAssistantSpeaking(false);
+    }
+    responseActiveRef.current = true;
+    dc.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          output_modalities: ["audio"],
+          instructions:
+            `Speak briefly to the student in character. ` +
+            `Plain English, piece names only (no algebraic notation aloud). ` +
+            `Remember: the student plays WHITE, you play BLACK. Keep it short — one or two sentences.\n\n` +
+            instructions,
         },
       }),
     );
@@ -329,12 +380,14 @@ export function useRealtimeCoach() {
 
   return {
     status,
+    isReady,
     isMicMuted,
     isAssistantSpeaking,
     lastError,
     connect,
     disconnect,
     commentOnMove,
+    speakIntro,
     interruptAssistant,
     setMicMuted,
   };

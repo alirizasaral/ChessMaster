@@ -3,7 +3,7 @@ import { useStore } from "@/hooks/use-store";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Play, CheckCircle2, RotateCcw, Heart, Trash2 } from "lucide-react";
+import { Play, CheckCircle2, RotateCcw, Heart, Trash2, Sparkles } from "lucide-react";
 
 export default function Home() {
   const { state, resetAllLessons } = useStore();
@@ -41,6 +41,34 @@ export default function Home() {
             </a>
             . Thank you!
           </p>
+        </div>
+
+        {/* Free play with the coach */}
+        <Link href="/free-play" className="block group no-default-hover-elevate">
+          <Card className="hover-elevate transition-all duration-300 border-primary/30 bg-primary/5 hover:border-primary/60">
+            <CardHeader className="pb-3">
+              <div className="flex items-start justify-between">
+                <CardTitle className="text-xl font-medium font-serif text-card-foreground flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-primary" />
+                  Play freely with the coach
+                </CardTitle>
+              </div>
+              <CardDescription className="text-sm text-muted-foreground leading-relaxed pt-1">
+                No lesson script — just a casual game against the coach. She'll react to every move with a quick, in-character take.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center text-sm font-medium text-primary group-hover:translate-x-1 transition-transform">
+                <Play className="w-4 h-4 mr-2" /> Start a free game
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <div className="pt-2 pb-1">
+          <h2 className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Opening lessons
+          </h2>
         </div>
 
         <main className="grid gap-4">
