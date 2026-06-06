@@ -135,7 +135,6 @@ export default function Lesson() {
   const [isComputerThinking, setIsComputerThinking] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const pendingReplyRef = useRef<number | null>(null);
 
   // Cancel any pending auto-reply when the lesson changes or component unmounts.
@@ -194,12 +193,6 @@ export default function Lesson() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Scroll chat to bottom
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [lesson?.chat]);
 
   if (!lesson || !lessonId) {
     return <div className="p-8 text-center text-muted-foreground">Lesson not found.</div>;
@@ -752,33 +745,22 @@ export default function Lesson() {
         </div>
       </div>
 
-      {/* Chat Area */}
+      {/* Chat Area — newest message at top */}
       <div className="flex-1 overflow-hidden flex flex-col bg-card">
-        <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col">
 
-          {/* First-time instructions */}
-          {isFirstLesson && (
-            <div className="rounded-xl border border-border bg-muted/60 p-4 text-sm text-foreground space-y-3">
-              {firstMoveHint && (
-                <div className="flex items-start gap-3 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2">
-                  <span className="font-mono font-bold text-primary text-base leading-tight shrink-0">{firstMoveHint.move}</span>
-                  <span className="text-muted-foreground leading-snug">{firstMoveHint.tip}</span>
-                </div>
-              )}
-              <div>
-                <p className="font-medium mb-1">How to play</p>
-                <ul className="space-y-1 text-muted-foreground list-disc list-inside">
-                  <li>Tap the highlighted square to make your first move</li>
-                  <li>Tap a piece to see all legal moves as dots</li>
-                  <li>Tap a highlighted square to move there</li>
-                  <li>Drag and drop also works</li>
-                </ul>
+          {/* Thinking indicator — always visible at the top */}
+          {isComputerThinking && (
+            <div className="flex max-w-[85%] mr-auto items-start">
+              <div className="px-4 py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Coach is replying...</span>
               </div>
             </div>
           )}
 
-          {/* Chat messages */}
-          {(lesson.chat as ChatMessage[]).map((msg, i) => (
+          {/* Chat messages — newest first */}
+          {([...(lesson.chat as ChatMessage[])].reverse()).map((msg, i) => (
             <div
               key={i}
               className={`flex flex-col max-w-[85%] ${msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"}`}
@@ -795,11 +777,23 @@ export default function Lesson() {
             </div>
           ))}
 
-          {isComputerThinking && (
-            <div className="flex max-w-[85%] mr-auto items-start">
-              <div className="px-4 py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Coach is replying...</span>
+          {/* First-time instructions — shown at the bottom as the oldest context */}
+          {isFirstLesson && (
+            <div className="rounded-xl border border-border bg-muted/60 p-4 text-sm text-foreground space-y-3">
+              {firstMoveHint && (
+                <div className="flex items-start gap-3 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2">
+                  <span className="font-mono font-bold text-primary text-base leading-tight shrink-0">{firstMoveHint.move}</span>
+                  <span className="text-muted-foreground leading-snug">{firstMoveHint.tip}</span>
+                </div>
+              )}
+              <div>
+                <p className="font-medium mb-1">How to play</p>
+                <ul className="space-y-1 text-muted-foreground list-disc list-inside">
+                  <li>Tap the highlighted square to make your first move</li>
+                  <li>Tap a piece to see all legal moves as dots</li>
+                  <li>Tap a highlighted square to move there</li>
+                  <li>Drag and drop also works</li>
+                </ul>
               </div>
             </div>
           )}

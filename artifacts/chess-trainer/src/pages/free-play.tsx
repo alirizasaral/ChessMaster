@@ -79,7 +79,6 @@ export default function FreePlay() {
   const [isComputerThinking, setIsComputerThinking] = useState(false);
 
   const pendingReplyRef = useRef<number | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const {
     status: voiceStatus,
@@ -108,12 +107,6 @@ export default function FreePlay() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // Scroll chat to bottom on update
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [state.chat]);
 
   // Voice error toast
   useEffect(() => {
@@ -529,9 +522,18 @@ export default function FreePlay() {
         </div>
       </div>
 
+      {/* Chat Area — newest message at top */}
       <div className="flex-1 overflow-hidden flex flex-col bg-card">
-        <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
-          {state.chat.map((msg, i) => (
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col">
+          {isComputerThinking && (
+            <div className="flex max-w-[85%] mr-auto items-start">
+              <div className="px-4 py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Coach is replying...</span>
+              </div>
+            </div>
+          )}
+          {[...state.chat].reverse().map((msg, i) => (
             <div
               key={i}
               className={`flex flex-col max-w-[85%] ${
@@ -549,14 +551,6 @@ export default function FreePlay() {
               </div>
             </div>
           ))}
-          {isComputerThinking && (
-            <div className="flex max-w-[85%] mr-auto items-start">
-              <div className="px-4 py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Coach is replying...</span>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
