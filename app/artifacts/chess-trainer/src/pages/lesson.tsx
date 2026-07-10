@@ -43,6 +43,27 @@ function sanToMove(fen: string, san: string): { from: Square; to: Square; promot
   }
 }
 
+const MIN_BOARD_SIZE = 280;
+const MAX_BOARD_SIZE_MOBILE = 480;
+const MAX_BOARD_SIZE_DESKTOP = 640;
+const DESKTOP_BREAKPOINT = 1024;
+
+function computeBoardSize(containerWidth: number, isDesktop: boolean): number {
+  const horizontalPadding = isDesktop ? 32 : 24;
+  const widthBudget = containerWidth - horizontalPadding;
+  const maxBoard = isDesktop ? MAX_BOARD_SIZE_DESKTOP : MAX_BOARD_SIZE_MOBILE;
+
+  const headerEstimate = 72;
+  const verticalPadding = isDesktop ? 48 : 32;
+  const mobileChatReserve = 220;
+
+  const heightBudget = isDesktop
+    ? window.innerHeight - headerEstimate - verticalPadding
+    : Math.min(window.innerHeight * 0.48, window.innerHeight - headerEstimate - mobileChatReserve);
+
+  return Math.floor(Math.max(MIN_BOARD_SIZE, Math.min(widthBudget, heightBudget, maxBoard)));
+}
+
 const FIRST_MOVE_HINTS: Record<string, { square: Square; move: string; tip: string }> = {
   "italian-game":     { square: "e2", move: "1. e4", tip: "Push the e-pawn two squares to control the center." },
   "ruy-lopez":        { square: "e2", move: "1. e4", tip: "Open with e4 — the classic starting move for the Ruy Lopez." },
@@ -155,7 +176,9 @@ export default function Lesson() {
   }, [voiceStatus, voiceError, toast]);
 
   const [game, setGame] = useState(new Chess());
-  const [boardWidth, setBoardWidth] = useState(() => Math.min(window.innerWidth - 48, 360));
+  const [boardWidth, setBoardWidth] = useState(() =>
+    computeBoardSize(window.innerWidth, window.innerWidth >= DESKTOP_BREAKPOINT),
+  );
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
   const [optionSquares, setOptionSquares] = useState<Record<string, React.CSSProperties>>({});
   const [isComputerThinking, setIsComputerThinking] = useState(false);
@@ -209,14 +232,25 @@ export default function Lesson() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lessonId]);
 
-  // Responsive board width — cap at 360px so chat is always visible
+  // Container-aware board sizing so the board scales with its column, not the viewport alone.
   useEffect(() => {
-    const handleResize = () => {
-      setBoardWidth(Math.min(window.innerWidth - 48, 360));
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateSize = () => {
+      const isDesktop = window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT}px)`).matches;
+      setBoardWidth(computeBoardSize(container.getBoundingClientRect().width, isDesktop));
     };
-    window.addEventListener("resize", handleResize);
-    handleResize();
-    return () => window.removeEventListener("resize", handleResize);
+
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(container);
+    window.addEventListener("resize", updateSize);
+    updateSize();
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
   }, []);
 
 
@@ -694,21 +728,21 @@ export default function Lesson() {
     : optionSquares;
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-background">
+    <div className="min-h-[100dvh] flex flex-col bg-background pb-[env(safe-area-inset-bottom)]">
       {/* Top Bar */}
-      <header className="flex items-center justify-between p-4 border-b border-border bg-card shadow-sm z-10">
-        <div className="flex items-center gap-3">
+      <header className="flex items-center justify-between gap-2 px-3 py-3 sm:px-4 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] border-b border-border bg-card shadow-sm z-10 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <Link href="/">
             <Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground hover:text-foreground">
               <ArrowLeft className="w-5 h-5" />
             </Button>
           </Link>
-          <div>
-            <h1 className="font-serif font-medium text-lg leading-none">{lesson.name}</h1>
-            <p className="text-xs text-muted-foreground mt-1 capitalize">{lesson.status.replace("_", " ")}</p>
+          <div className="min-w-0">
+            <h1 className="font-serif font-medium text-base sm:text-lg leading-none truncate">{lesson.name}</h1>
+            <p className="text-xs text-muted-foreground mt-1 capitalize truncate">{lesson.status.replace("_", " ")}</p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
           <Button
             variant="ghost"
             size="icon"
@@ -788,83 +822,88 @@ export default function Lesson() {
         </div>
       </header>
 
-      {/* Board */}
-      <div
-        className="flex-none bg-muted/30 border-b border-border p-4 flex justify-center"
-        ref={containerRef}
-      >
+      <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)] lg:max-w-6xl lg:mx-auto lg:w-full lg:gap-6 lg:px-6 lg:py-4">
+        {/* Board */}
         <div
-          className="rounded-sm overflow-hidden shadow-md"
-          style={{ width: boardWidth, flexShrink: 0 }}
+          className="flex-none lg:flex lg:items-center lg:justify-center bg-muted/30 border-b lg:border-b-0 lg:border lg:rounded-xl border-border p-3 sm:p-4"
+          ref={containerRef}
         >
-          <Chessboard
-            options={{
-              position: game.fen(),
-              onPieceDrop: handlePieceDrop,
-              onSquareClick: handleSquareClick,
-              squareStyles: boardSquareStyles,
-              darkSquareStyle: { backgroundColor: "hsl(var(--primary))" },
-              lightSquareStyle: { backgroundColor: "hsl(var(--secondary))" },
-              animationDurationInMs: 150,
-            }}
-          />
+          <div
+            className="mx-auto rounded-sm overflow-hidden shadow-md"
+            style={{ width: boardWidth, height: boardWidth, flexShrink: 0 }}
+          >
+            <Chessboard
+              options={{
+                position: game.fen(),
+                onPieceDrop: handlePieceDrop,
+                onSquareClick: handleSquareClick,
+                squareStyles: boardSquareStyles,
+                darkSquareStyle: { backgroundColor: "hsl(var(--primary))" },
+                lightSquareStyle: { backgroundColor: "hsl(var(--secondary))" },
+                animationDurationInMs: 150,
+              }}
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Chat Area — newest message at top */}
-      <div className="flex-1 overflow-hidden flex flex-col bg-card">
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col">
+        {/* Coach / chat panel — newest message at top */}
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-card lg:rounded-xl lg:border lg:border-border lg:shadow-sm lg:max-h-[calc(100dvh-6.5rem)]">
+          <div className="hidden lg:flex shrink-0 items-center px-4 py-3 border-b border-border">
+            <h2 className="font-serif font-medium text-base">Coach</h2>
+          </div>
 
-          {/* Thinking indicator — always visible at the top */}
-          {isComputerThinking && (
-            <div className="flex max-w-[85%] mr-auto items-start">
-              <div className="px-4 py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Coach is replying...</span>
-              </div>
-            </div>
-          )}
-
-          {/* Chat messages — newest first */}
-          {([...(lesson.chat as ChatMessage[])].reverse()).map((msg, i) => (
-            <div
-              key={i}
-              className={`flex flex-col max-w-[85%] ${msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"}`}
-            >
-              <div
-                className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                  msg.role === "user"
-                    ? "bg-primary text-primary-foreground rounded-tr-sm"
-                    : "bg-muted text-foreground border border-border rounded-tl-sm"
-                }`}
-              >
-                {msg.content}
-              </div>
-            </div>
-          ))}
-
-          {/* First-time instructions — shown at the bottom as the oldest context */}
-          {isFirstLesson && (
-            <div className="rounded-xl border border-border bg-muted/60 p-4 text-sm text-foreground space-y-3">
-              {firstMoveHint && (
-                <div className="flex items-start gap-3 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2">
-                  <span className="font-mono font-bold text-primary text-base leading-tight shrink-0">{firstMoveHint.move}</span>
-                  <span className="text-muted-foreground leading-snug">{firstMoveHint.tip}</span>
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 flex flex-col">
+            {/* Thinking indicator — always visible at the top */}
+            {isComputerThinking && (
+              <div className="flex max-w-[92%] sm:max-w-[85%] mr-auto items-start">
+                <div className="px-3 sm:px-4 py-2.5 sm:py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  <span>Coach is replying...</span>
                 </div>
-              )}
-              <div>
-                <p className="font-medium mb-1">How to play</p>
-                <ul className="space-y-1 text-muted-foreground list-disc list-inside">
-                  <li>Tap the highlighted square to make your first move</li>
-                  <li>Tap a piece to see all legal moves as dots</li>
-                  <li>Tap a highlighted square to move there</li>
-                  <li>Drag and drop also works</li>
-                </ul>
               </div>
-            </div>
-          )}
+            )}
+
+            {/* Chat messages — newest first */}
+            {([...(lesson.chat as ChatMessage[])].reverse()).map((msg, i) => (
+              <div
+                key={i}
+                className={`flex flex-col max-w-[92%] sm:max-w-[85%] ${msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"}`}
+              >
+                <div
+                  className={`px-3 sm:px-4 py-2.5 sm:py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+                    msg.role === "user"
+                      ? "bg-primary text-primary-foreground rounded-tr-sm"
+                      : "bg-muted text-foreground border border-border rounded-tl-sm max-w-prose"
+                  }`}
+                >
+                  {msg.content}
+                </div>
+              </div>
+            ))}
+
+            {/* First-time instructions — shown at the bottom as the oldest context */}
+            {isFirstLesson && (
+              <div className="rounded-xl border border-border bg-muted/60 p-3 sm:p-4 text-sm text-foreground space-y-3 max-w-prose">
+                {firstMoveHint && (
+                  <div className="flex items-start gap-3 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2">
+                    <span className="font-mono font-bold text-primary text-base leading-tight shrink-0">{firstMoveHint.move}</span>
+                    <span className="text-muted-foreground leading-snug">{firstMoveHint.tip}</span>
+                  </div>
+                )}
+                <div>
+                  <p className="font-medium mb-1">How to play</p>
+                  <ul className="space-y-1 text-muted-foreground list-disc list-inside">
+                    <li>Tap the highlighted square to make your first move</li>
+                    <li>Tap a piece to see all legal moves as dots</li>
+                    <li>Tap a highlighted square to move there</li>
+                    <li>Drag and drop also works</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
