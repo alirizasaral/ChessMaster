@@ -3,7 +3,7 @@ import { useStore } from "@/hooks/use-store";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Play, CheckCircle2, RotateCcw, Heart, Trash2, Sparkles, Settings } from "lucide-react";
+import { Play, CheckCircle2, RotateCcw, Heart, Trash2, Sparkles, Settings, Github } from "lucide-react";
 import { Logo } from "@/components/logo";
 
 export default function Home() {
@@ -29,6 +29,24 @@ export default function Home() {
             </Button>
           </Link>
         </header>
+
+        {/* Open source note */}
+        <div className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground flex items-start gap-3">
+          <Github className="w-4 h-4 mt-0.5 text-primary shrink-0" />
+          <p className="leading-relaxed">
+            ChessMaster is open source — anyone can run their own copy. Fork it, deploy it, and make it yours on{" "}
+            <a
+              href="https://github.com/alirizasaral/ChessMaster"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary font-medium underline underline-offset-2 hover:text-primary/80"
+              data-testid="link-github"
+            >
+              GitHub
+            </a>
+            .
+          </p>
+        </div>
 
         {/* Donation note */}
         <div className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground flex items-start gap-3">

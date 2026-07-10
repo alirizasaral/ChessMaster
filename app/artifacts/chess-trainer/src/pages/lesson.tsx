@@ -28,6 +28,7 @@ import {
   resolveGameLog,
 } from "@/lib/game-transcript";
 import { useRealtimeCoach } from "@/lib/use-realtime";
+import { computeBoardSize, DESKTOP_BREAKPOINT } from "@/lib/board-layout";
 
 type ChatMessage = { role: "user" | "coach"; content: string; moveNumber?: number };
 
@@ -41,27 +42,6 @@ function sanToMove(fen: string, san: string): { from: Square; to: Square; promot
   } catch {
     return null;
   }
-}
-
-const MIN_BOARD_SIZE = 280;
-const MAX_BOARD_SIZE_MOBILE = 480;
-const MAX_BOARD_SIZE_DESKTOP = 640;
-const DESKTOP_BREAKPOINT = 1024;
-
-function computeBoardSize(containerWidth: number, isDesktop: boolean): number {
-  const horizontalPadding = isDesktop ? 32 : 24;
-  const widthBudget = containerWidth - horizontalPadding;
-  const maxBoard = isDesktop ? MAX_BOARD_SIZE_DESKTOP : MAX_BOARD_SIZE_MOBILE;
-
-  const headerEstimate = 72;
-  const verticalPadding = isDesktop ? 48 : 32;
-  const mobileChatReserve = 220;
-
-  const heightBudget = isDesktop
-    ? window.innerHeight - headerEstimate - verticalPadding
-    : Math.min(window.innerHeight * 0.48, window.innerHeight - headerEstimate - mobileChatReserve);
-
-  return Math.floor(Math.max(MIN_BOARD_SIZE, Math.min(widthBudget, heightBudget, maxBoard)));
 }
 
 const FIRST_MOVE_HINTS: Record<string, { square: Square; move: string; tip: string }> = {

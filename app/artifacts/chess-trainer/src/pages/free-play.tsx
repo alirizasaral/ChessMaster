@@ -27,6 +27,7 @@ import {
   type GameEvent,
 } from "@/lib/game-transcript";
 import { useRealtimeCoach } from "@/lib/use-realtime";
+import { computeBoardSize, DESKTOP_BREAKPOINT } from "@/lib/board-layout";
 
 const STORE_KEY = "chess-trainer:free-play";
 const DEFAULT_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -90,7 +91,7 @@ export default function FreePlay() {
     }
   });
   const [boardWidth, setBoardWidth] = useState(() =>
-    Math.min(window.innerWidth - 48, 360),
+    computeBoardSize(window.innerWidth, window.innerWidth >= DESKTOP_BREAKPOINT),
   );
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
   const [optionSquares, setOptionSquares] = useState<
@@ -99,6 +100,7 @@ export default function FreePlay() {
   const [isComputerThinking, setIsComputerThinking] = useState(false);
 
   const pendingReplyRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const {
     status: voiceStatus,
@@ -119,12 +121,25 @@ export default function FreePlay() {
     saveState(state);
   }, [state]);
 
-  // Responsive board
+  // Container-aware board sizing so the board scales with its column, not the viewport alone.
   useEffect(() => {
-    const onResize = () =>
-      setBoardWidth(Math.min(window.innerWidth - 48, 360));
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateSize = () => {
+      const isDesktop = window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT}px)`).matches;
+      setBoardWidth(computeBoardSize(container.getBoundingClientRect().width, isDesktop));
+    };
+
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(container);
+    window.addEventListener("resize", updateSize);
+    updateSize();
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
   }, []);
 
 
@@ -463,9 +478,9 @@ export default function FreePlay() {
   };
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-background">
-      <header className="flex items-center justify-between p-4 border-b border-border bg-card shadow-sm z-10">
-        <div className="flex items-center gap-3">
+    <div className="min-h-[100dvh] flex flex-col bg-background pb-[env(safe-area-inset-bottom)]">
+      <header className="flex items-center justify-between gap-2 px-3 py-3 sm:px-4 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] border-b border-border bg-card shadow-sm z-10 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <Link href="/">
             <Button
               variant="ghost"
@@ -475,14 +490,14 @@ export default function FreePlay() {
               <ArrowLeft className="w-5 h-5" />
             </Button>
           </Link>
-          <div>
-            <h1 className="font-serif font-medium text-lg leading-none">Free Play</h1>
-            <p className="text-xs text-muted-foreground mt-1">
+          <div className="min-w-0">
+            <h1 className="font-serif font-medium text-base sm:text-lg leading-none truncate">Free Play</h1>
+            <p className="text-xs text-muted-foreground mt-1 truncate">
               {game.turn() === "w" ? "Your move" : "Coach is thinking…"}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
           <Button
             variant="ghost"
             size="icon"
@@ -553,56 +568,64 @@ export default function FreePlay() {
         </div>
       </header>
 
-      <div className="flex-none bg-muted/30 border-b border-border p-4 flex justify-center">
+      <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)] lg:max-w-6xl lg:mx-auto lg:w-full lg:gap-6 lg:px-6 lg:py-4">
         <div
-          className="rounded-sm overflow-hidden shadow-md"
-          style={{ width: boardWidth, flexShrink: 0 }}
+          className="flex-none lg:flex lg:items-center lg:justify-center bg-muted/30 border-b lg:border-b-0 lg:border lg:rounded-xl border-border p-3 sm:p-4"
+          ref={containerRef}
         >
-          <Chessboard
-            options={{
-              position: game.fen(),
-              onPieceDrop: handlePieceDrop,
-              onSquareClick: handleSquareClick,
-              squareStyles: optionSquares,
-              darkSquareStyle: { backgroundColor: "hsl(var(--primary))" },
-              lightSquareStyle: { backgroundColor: "hsl(var(--secondary))" },
-              animationDurationInMs: 150,
-            }}
-          />
+          <div
+            className="mx-auto rounded-sm overflow-hidden shadow-md"
+            style={{ width: boardWidth, height: boardWidth, flexShrink: 0 }}
+          >
+            <Chessboard
+              options={{
+                position: game.fen(),
+                onPieceDrop: handlePieceDrop,
+                onSquareClick: handleSquareClick,
+                squareStyles: optionSquares,
+                darkSquareStyle: { backgroundColor: "hsl(var(--primary))" },
+                lightSquareStyle: { backgroundColor: "hsl(var(--secondary))" },
+                animationDurationInMs: 150,
+              }}
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Chat Area — newest message at top */}
-      <div className="flex-1 overflow-hidden flex flex-col bg-card">
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col">
-          {isComputerThinking && (
-            <div className="flex max-w-[85%] mr-auto items-start">
-              <div className="px-4 py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Coach is replying...</span>
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-card lg:rounded-xl lg:border lg:border-border lg:shadow-sm lg:max-h-[calc(100dvh-6.5rem)]">
+          <div className="hidden lg:flex shrink-0 items-center px-4 py-3 border-b border-border">
+            <h2 className="font-serif font-medium text-base">Coach</h2>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 flex flex-col">
+            {isComputerThinking && (
+              <div className="flex max-w-[92%] sm:max-w-[85%] mr-auto items-start">
+                <div className="px-3 sm:px-4 py-2.5 sm:py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  <span>Coach is replying...</span>
+                </div>
               </div>
-            </div>
-          )}
-          {[...state.chat].reverse().map((msg, i) => (
-            <div
-              key={i}
-              className={`flex flex-col max-w-[85%] ${
-                msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"
-              }`}
-            >
+            )}
+            {[...state.chat].reverse().map((msg, i) => (
               <div
-                className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                  msg.role === "user"
-                    ? "bg-primary text-primary-foreground rounded-tr-sm"
-                    : "bg-muted text-foreground border border-border rounded-tl-sm"
+                key={i}
+                className={`flex flex-col max-w-[92%] sm:max-w-[85%] ${
+                  msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"
                 }`}
               >
-                {msg.content}
+                <div
+                  className={`px-3 sm:px-4 py-2.5 sm:py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+                    msg.role === "user"
+                      ? "bg-primary text-primary-foreground rounded-tr-sm"
+                      : "bg-muted text-foreground border border-border rounded-tl-sm max-w-prose"
+                  }`}
+                >
+                  {msg.content}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
