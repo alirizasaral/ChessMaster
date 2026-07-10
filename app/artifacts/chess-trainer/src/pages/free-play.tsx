@@ -27,6 +27,7 @@ import {
   type GameEvent,
 } from "@/lib/game-transcript";
 import { useRealtimeCoach } from "@/lib/use-realtime";
+import { getVoiceCoachErrorToast } from "@/lib/openai-quota-error";
 import { computeBoardSize, DESKTOP_BREAKPOINT } from "@/lib/board-layout";
 
 const STORE_KEY = "chess-trainer:free-play";
@@ -108,6 +109,7 @@ export default function FreePlay() {
     isMicMuted,
     isAssistantSpeaking,
     lastError: voiceError,
+    errorKind: voiceErrorKind,
     connect: connectVoice,
     disconnect: disconnectVoice,
     commentOnMove,
@@ -146,13 +148,17 @@ export default function FreePlay() {
   // Voice error toast
   useEffect(() => {
     if (voiceStatus === "error") {
+      const { title, description } = getVoiceCoachErrorToast(
+        voiceErrorKind ?? "generic",
+        voiceError,
+      );
       toast({
-        title: "Couldn't start the voice coach",
-        description: voiceError ?? "Check your microphone permission and try again.",
+        title,
+        description,
         variant: "destructive",
       });
     }
-  }, [voiceStatus, voiceError, toast]);
+  }, [voiceStatus, voiceErrorKind, voiceError, toast]);
 
   // Voice intro — fires once on each false->true voiceReady transition,
   // using a snapshot of game state at that moment. Keyed only on

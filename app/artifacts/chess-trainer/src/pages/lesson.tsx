@@ -28,6 +28,7 @@ import {
   resolveGameLog,
 } from "@/lib/game-transcript";
 import { useRealtimeCoach } from "@/lib/use-realtime";
+import { getVoiceCoachErrorToast } from "@/lib/openai-quota-error";
 import { computeBoardSize, DESKTOP_BREAKPOINT } from "@/lib/board-layout";
 
 type ChatMessage = { role: "user" | "coach"; content: string; moveNumber?: number };
@@ -67,6 +68,7 @@ export default function Lesson() {
     isMicMuted,
     isAssistantSpeaking,
     lastError: voiceError,
+    errorKind: voiceErrorKind,
     connect: connectVoice,
     disconnect: disconnectVoice,
     commentOnMove,
@@ -144,16 +146,19 @@ export default function Lesson() {
   }, [voiceReady, speakIntro, userName]);
 
   // Show a toast if connecting fails (status flips to "error" inside the hook).
-  // Include the real error message so on-device failures are debuggable.
   useEffect(() => {
     if (voiceStatus === "error") {
+      const { title, description } = getVoiceCoachErrorToast(
+        voiceErrorKind ?? "generic",
+        voiceError,
+      );
       toast({
-        title: "Couldn't start the voice coach",
-        description: voiceError ?? "Check your microphone permission and try again.",
+        title,
+        description,
         variant: "destructive",
       });
     }
-  }, [voiceStatus, voiceError, toast]);
+  }, [voiceStatus, voiceErrorKind, voiceError, toast]);
 
   const [game, setGame] = useState(new Chess());
   const [boardWidth, setBoardWidth] = useState(() =>

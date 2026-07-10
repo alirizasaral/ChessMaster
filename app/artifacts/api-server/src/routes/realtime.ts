@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { detectOpenAiQuotaError } from "../lib/openai-quota-error.js";
 
 const router = Router();
 
@@ -46,7 +47,13 @@ router.post("/realtime/session", async (_req, res) => {
       console.error(
         `OpenAI Realtime client_secrets error status=${response.status} body=${errText}`,
       );
-      res.status(response.status).json({ error: `OpenAI Realtime error: ${errText}` });
+      const payload: { error: string; code?: string } = {
+        error: `OpenAI Realtime error: ${errText}`,
+      };
+      if (detectOpenAiQuotaError(response.status, errText)) {
+        payload.code = "insufficient_funds";
+      }
+      res.status(response.status).json(payload);
       return;
     }
 

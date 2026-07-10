@@ -1,6 +1,7 @@
 import { Router } from "express";
 import OpenAI from "openai";
 import { GetCoachFeedbackBody } from "@workspace/api-zod";
+import { detectOpenAiQuotaError } from "../lib/openai-quota-error.js";
 
 const router = Router();
 
@@ -64,7 +65,13 @@ Rules:
     res.json({ feedback });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    res.status(500).json({ error: `OpenAI error: ${message}` });
+    const payload: { error: string; code?: string } = {
+      error: `OpenAI error: ${message}`,
+    };
+    if (detectOpenAiQuotaError(undefined, message)) {
+      payload.code = "insufficient_funds";
+    }
+    res.status(500).json(payload);
   }
 });
 

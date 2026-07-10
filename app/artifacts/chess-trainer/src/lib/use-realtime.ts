@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatGameTranscript, type GameEvent } from "@/lib/game-transcript";
+import {
+  detectOpenAiQuotaError,
+  type VoiceCoachErrorKind,
+} from "@/lib/openai-quota-error";
 
 /**
  * useRealtimeCoach
@@ -196,6 +200,7 @@ export function useRealtimeCoach({ userName }: { userName?: string } = {}) {
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<VoiceCoachErrorKind | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -266,13 +271,24 @@ export function useRealtimeCoach({ userName }: { userName?: string } = {}) {
     if (status === "connecting" || status === "connected") return;
     setStatus("connecting");
     setLastError(null);
+    setErrorKind(null);
 
     try {
       // 1) Get an ephemeral session key from our server.
       const BASE_URL = import.meta.env.BASE_URL;
       const sessionResp = await fetch(`${BASE_URL}api/realtime/session`, { method: "POST" });
       if (!sessionResp.ok) {
-        throw new Error(`Realtime session create failed: ${sessionResp.status}`);
+        const body = await sessionResp.text();
+        const isQuota = detectOpenAiQuotaError(sessionResp.status, body);
+        setErrorKind(isQuota ? "quota" : "generic");
+        let message = `Realtime session create failed: ${sessionResp.status}`;
+        try {
+          const parsed = JSON.parse(body) as { error?: string };
+          if (parsed.error) message = parsed.error;
+        } catch {
+          if (body) message = body;
+        }
+        throw new Error(message);
       }
       // GA shape: { value: "ek_...", expires_at: ..., session: {...}, model: "..." }
       // Beta shape (deprecated): { client_secret: { value: "..." }, ... }
@@ -360,6 +376,15 @@ export function useRealtimeCoach({ userName }: { userName?: string } = {}) {
             setIsAssistantSpeaking(false);
           } else if (evt.type === "error") {
             console.error("Realtime API error:", evt);
+            const body = JSON.stringify(evt);
+            if (detectOpenAiQuotaError(undefined, body)) {
+              if (pcRef.current === pc) {
+                disconnect();
+                setLastError(body);
+                setErrorKind("quota");
+                setStatus("error");
+              }
+            }
           } else if (
             evt.type === "session.created" ||
             evt.type === "session.updated"
@@ -403,6 +428,8 @@ export function useRealtimeCoach({ userName }: { userName?: string } = {}) {
       );
       if (!sdpResp.ok) {
         const text = await sdpResp.text();
+        const isQuota = detectOpenAiQuotaError(sdpResp.status, text);
+        setErrorKind(isQuota ? "quota" : "generic");
         throw new Error(`SDP exchange failed (${sdpResp.status}): ${text}`);
       }
       const answerSdp = await sdpResp.text();
@@ -414,6 +441,7 @@ export function useRealtimeCoach({ userName }: { userName?: string } = {}) {
       const message = err instanceof Error ? err.message : String(err);
       disconnect();
       setLastError(message);
+      setErrorKind((kind) => kind ?? "generic");
       setStatus("error");
     }
   }, [status, disconnect]);
@@ -513,6 +541,7 @@ export function useRealtimeCoach({ userName }: { userName?: string } = {}) {
     isMicMuted,
     isAssistantSpeaking,
     lastError,
+    errorKind,
     connect,
     disconnect,
     commentOnMove,
