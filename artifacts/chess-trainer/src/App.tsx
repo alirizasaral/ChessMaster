@@ -6,6 +6,7 @@ import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import Lesson from "@/pages/lesson";
 import FreePlay from "@/pages/free-play";
+import Settings from "@/pages/settings";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,6 +21,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/free-play" component={FreePlay} />
+      <Route path="/settings" component={Settings} />
       <Route path="/lesson/:lessonId" component={Lesson} />
       <Route component={NotFound} />
     </Switch>

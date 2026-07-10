@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { OPENINGS } from "@/lib/openings";
+import { type GameEvent, resolveGameLog } from "@/lib/game-transcript";
 
-function buildWelcomeMessage(lessonId: string, lessonName: string): string {
+function buildWelcomeMessage(lessonId: string, lessonName: string, userName?: string): string {
+  const greeting = userName ? `Welcome, ${userName}, to the` : `Welcome to the`;
   const opening = OPENINGS[lessonId];
   if (!opening) {
-    return `Welcome to the ${lessonName}. Play your first move when ready!`;
+    return `${greeting} ${lessonName}. Play your first move when ready!`;
   }
   const firstMove = opening.line[0];
-  return `Welcome to the ${opening.name}. ${opening.intro}\n\nLet's start: play 1. ${firstMove} — I'll highlight the square for you.`;
+  return `${greeting} ${opening.name}. ${opening.intro}\n\nLet's start: play 1. ${firstMove} — I'll highlight the square for you.`;
 }
 
 export type LessonStatus = "not_started" | "started" | "finished";
@@ -25,12 +27,14 @@ export interface LessonData {
   status: LessonStatus;
   fen: string;
   moves: string[];
+  gameLog: GameEvent[];
   chat: ChatMessage[];
   lastUpdated: string;
 }
 
 export interface AppSettings {
   sound: boolean;
+  userName?: string;
 }
 
 export interface AppState {
@@ -79,14 +83,22 @@ const INITIAL_LESSONS: LessonDef[] = [
 
 const DEFAULT_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-function buildFreshLesson(def: LessonDef): LessonData {
+function buildFreshLesson(def: LessonDef, userName?: string): LessonData {
   return {
     ...def,
     status: "not_started",
     fen: DEFAULT_FEN,
     moves: [],
-    chat: [{ role: "coach", content: buildWelcomeMessage(def.id, def.name) }],
+    gameLog: [],
+    chat: [{ role: "coach", content: buildWelcomeMessage(def.id, def.name, userName) }],
     lastUpdated: new Date().toISOString(),
+  };
+}
+
+function normalizeLesson(lesson: LessonData): LessonData {
+  return {
+    ...lesson,
+    gameLog: resolveGameLog(lesson.moves, lesson.gameLog),
   };
 }
 
@@ -111,7 +123,19 @@ export function useStore() {
     try {
       const stored = localStorage.getItem(STORE_KEY);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored) as AppState;
+        const lessons: Record<string, LessonData> = {};
+        for (const [id, lesson] of Object.entries(parsed.lessons)) {
+          lessons[id] = normalizeLesson(lesson);
+        }
+        return {
+          ...parsed,
+          lessons,
+          settings: {
+            sound: parsed.settings?.sound ?? true,
+            userName: parsed.settings?.userName?.trim() || undefined,
+          },
+        };
       }
     } catch (e) {
       console.error("Failed to load state from localStorage", e);
@@ -144,6 +168,14 @@ export function useStore() {
     }));
   }, []);
 
+  const setUserName = useCallback((name: string) => {
+    const trimmed = name.trim();
+    setState((prev) => ({
+      ...prev,
+      settings: { ...prev.settings, userName: trimmed || undefined },
+    }));
+  }, []);
+
   const resetLesson = useCallback((id: string) => {
     setState((prev) => {
       const def = INITIAL_LESSONS.find((l) => l.id === id);
@@ -152,7 +184,7 @@ export function useStore() {
         ...prev,
         lessons: {
           ...prev.lessons,
-          [id]: buildFreshLesson(def),
+          [id]: buildFreshLesson(def, prev.settings.userName),
         },
       };
     });
@@ -162,7 +194,7 @@ export function useStore() {
     setState((prev) => {
       const lessons: Record<string, LessonData> = {};
       INITIAL_LESSONS.forEach((def) => {
-        lessons[def.id] = buildFreshLesson(def);
+        lessons[def.id] = buildFreshLesson(def, prev.settings.userName);
       });
       return { ...prev, lessons };
     });
@@ -172,6 +204,7 @@ export function useStore() {
     state,
     updateLesson,
     toggleSound,
+    setUserName,
     resetLesson,
     resetAllLessons,
   };

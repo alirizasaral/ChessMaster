@@ -14,10 +14,19 @@ import {
   PhoneCall,
   PhoneOff,
   RotateCcw,
+  Settings,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { checkOpeningMove, OPENINGS } from "@/lib/openings";
 import { pickEngineMoveSan, describeGameOver } from "@/lib/engine";
+import {
+  appendCoachPlay,
+  appendReset,
+  appendRollback,
+  appendStudentPlay,
+  removedPliesFromUndoneMoves,
+  resolveGameLog,
+} from "@/lib/game-transcript";
 import { useRealtimeCoach } from "@/lib/use-realtime";
 
 type ChatMessage = { role: "user" | "coach"; content: string; moveNumber?: number };
@@ -49,6 +58,7 @@ export default function Lesson() {
   const { toast } = useToast();
 
   const lesson = lessonId ? state.lessons[lessonId] : null;
+  const userName = state.settings.userName;
 
   const {
     status: voiceStatus,
@@ -62,7 +72,7 @@ export default function Lesson() {
     speakIntro,
     interruptAssistant,
     setMicMuted,
-  } = useRealtimeCoach();
+  } = useRealtimeCoach({ userName });
 
   const handleToggleVoice = async () => {
     if (voiceStatus === "connected" || voiceStatus === "connecting") {
@@ -78,10 +88,20 @@ export default function Lesson() {
   // they should play according to the recorded mainline. Captured via refs
   // so the effect's only real dependency is `voiceReady` — otherwise it
   // would re-fire (and cancel ongoing move commentary) every move.
-  const lessonSnapshotRef = useRef<{ lessonId: string; name: string; moves: string[] } | null>(null);
+  const lessonSnapshotRef = useRef<{
+    lessonId: string;
+    name: string;
+    moves: string[];
+    gameLog: ReturnType<typeof resolveGameLog>;
+  } | null>(null);
   useEffect(() => {
     lessonSnapshotRef.current = lessonId && lesson
-      ? { lessonId, name: lesson.name, moves: lesson.moves }
+      ? {
+          lessonId,
+          name: lesson.name,
+          moves: lesson.moves,
+          gameLog: resolveGameLog(lesson.moves, lesson.gameLog),
+        }
       : null;
   }, [lessonId, lesson]);
 
@@ -93,28 +113,34 @@ export default function Lesson() {
 
     const opening = OPENINGS[snap.lessonId];
     const nextUserMove = opening?.line[snap.moves.length] ?? null;
-    const movesSoFar = snap.moves.join(" ") || "(none yet)";
+
+    const who = userName ?? "the student";
 
     if (snap.moves.length === 0) {
-      speakIntro(
-        `Greet the student for the ${snap.name} lesson. ` +
-        `Tell them the very first move they should play is ${opening?.line[0] ?? "the recommended opening move"} ` +
-        `— translate that into spoken English (e.g. "push your king's pawn two squares" for 1.e4). ` +
-        `One or two short sentences total.`,
-      );
+      speakIntro({
+        instructions:
+          `Greet ${who} for the ${snap.name} lesson. ` +
+          `Tell them the very first move they should play is ${opening?.line[0] ?? "the recommended opening move"} ` +
+          `(translate into spoken English, e.g. "push your king's pawn two squares" for 1.e4).`,
+        gameLog: snap.gameLog,
+      });
     } else if (nextUserMove) {
-      speakIntro(
-        `Lesson in progress: ${snap.name}. Moves played so far: ${movesSoFar}. ` +
-        `Welcome the student back and tell them the next move they should play is ${nextUserMove}. ` +
-        `Translate it into spoken English. One or two short sentences.`,
-      );
+      speakIntro({
+        instructions:
+          `Lesson in progress: ${snap.name}. ` +
+          `Welcome ${who} back and tell them the next move they should play is ${nextUserMove}. ` +
+          `Translate it into spoken English.`,
+        gameLog: snap.gameLog,
+      });
     } else {
-      speakIntro(
-        `Lesson: ${snap.name}. The recorded mainline is finished — moves played so far: ${movesSoFar}. ` +
-        `Tell the student we're now in free play and to make any move they like. One short sentence.`,
-      );
+      speakIntro({
+        instructions:
+          `Lesson: ${snap.name}. The recorded mainline is finished. ` +
+          `Tell ${who} we're now in free play and to make any move they like.`,
+        gameLog: snap.gameLog,
+      });
     }
-  }, [voiceReady, speakIntro]);
+  }, [voiceReady, speakIntro, userName]);
 
   // Show a toast if connecting fails (status flips to "error" inside the hook).
   // Include the real error message so on-device failures are debuggable.
@@ -243,6 +269,7 @@ export default function Lesson() {
     // reconstruct history from FEN alone), which would otherwise make every move
     // after a reload look "off-line" and skip the computer reply.
     const movesBefore = lesson.moves;
+    const mode = `Lesson: ${lesson.name}`;
     const gameCopy = new Chess(game.fen());
     let result;
     try {
@@ -254,6 +281,8 @@ export default function Lesson() {
     if (!result) return false;
 
     const userSan = result.san;
+    const gameLogBefore = resolveGameLog(lesson.moves, lesson.gameLog);
+    const logAfterUser = appendStudentPlay(gameLogBefore, userSan);
     const afterUserFen = gameCopy.fen();
 
     setGame(gameCopy);
@@ -266,11 +295,18 @@ export default function Lesson() {
     const check = checkOpeningMove(lessonId, movesBefore, userSan);
 
     // Helper: post chat + persist current FEN/moves
-    const pushUserAndCoach = (coachContent: string, finalFen: string, finalMoves: string[]) => {
+    const pushUserAndCoach = (
+      coachContent: string,
+      finalFen: string,
+      finalMoves: string[],
+      trigger: "student_move" | "off_line_move" | "game_over" = "student_move",
+      voiceHint?: string,
+    ) => {
       updateLesson(lessonId, (l) => ({
         ...l,
         fen: finalFen,
         moves: finalMoves,
+        gameLog: logAfterUser,
         status: l.status === "not_started" ? "started" : l.status,
         chat: [
           ...l.chat,
@@ -278,10 +314,12 @@ export default function Lesson() {
           { role: "coach" as const, content: coachContent },
         ],
       }));
-      commentOnMove(
-        `Lesson: ${lesson.name}. The student just played ${userSan} (move ${movesBefore.length + 1}). ` +
-        `On-screen coach note: ${coachContent}`,
-      );
+      commentOnMove({
+        gameLog: logAfterUser,
+        trigger,
+        mode,
+        hint: voiceHint ?? `On-screen coach note: ${coachContent}`,
+      });
     };
 
     // Off-line: gently correct the user. Don't auto-play.
@@ -289,15 +327,22 @@ export default function Lesson() {
       const expected = check && check.kind === "off_line" ? check.expected : null;
       const expectedNote = check && check.kind === "off_line" ? check.expectedNote : null;
       let msg: string;
+      let voiceHint: string;
       if (expected) {
         msg = `That's not the main line of the ${lesson.name}. The recommended move is ${expected}.`;
         if (expectedNote) msg += ` ${expectedNote}`;
         msg += ` Tap undo and try again.`;
+        voiceHint =
+          `Wrong move for this lesson. The correct move is ${expected}.` +
+          (expectedNote ? ` ${expectedNote}` : "") +
+          ` Ask the student to tap undo to revert and try the recommended move.`;
       } else {
         msg = `You're past the main line I know — feel free to keep playing or tap undo to revisit.`;
+        voiceHint =
+          "The student is past the recorded main line. Ask them to tap undo if they want to return to the lesson line.";
       }
       setGame(gameCopy);
-      pushUserAndCoach(msg, afterUserFen, movesAfterUser);
+      pushUserAndCoach(msg, afterUserFen, movesAfterUser, "off_line_move", voiceHint);
       return true;
     }
 
@@ -308,7 +353,7 @@ export default function Lesson() {
       if (gameCopy.isGameOver()) {
         const endMsg = describeGameOver(gameCopy, lesson.name);
         setGame(gameCopy);
-        pushUserAndCoach(endMsg, afterUserFen, movesAfterUser);
+        pushUserAndCoach(endMsg, afterUserFen, movesAfterUser, "game_over");
         return true;
       }
 
@@ -317,6 +362,7 @@ export default function Lesson() {
         ...l,
         fen: afterUserFen,
         moves: movesAfterUser,
+        gameLog: logAfterUser,
         status: l.status === "not_started" ? "started" : l.status,
         chat: [
           ...l.chat,
@@ -358,19 +404,24 @@ export default function Lesson() {
 
         setGame(afterEngine);
         setIsComputerThinking(false);
+        const logAfterCoach = engineSan
+          ? appendCoachPlay(logAfterUser, engineSan)
+          : logAfterUser;
         updateLesson(scheduledLessonId, (l) => ({
           ...l,
           fen: finalFen,
           moves: finalMoves,
+          gameLog: logAfterCoach,
           chat: [...l.chat, { role: "coach" as const, content: coachMsg }],
         }));
-        commentOnMove(
-          `Free play in ${lesson.name}. Student played ${userSan} (move ${movesBefore.length + 1}). ` +
-          (engineSan ? `You (Black) reply with ${engineSan}. ` : `You have no legal reply. `) +
-          (afterEngine.isGameOver()
-            ? `Game over: ${describeGameOver(afterEngine, lesson.name)}`
-            : `It's their turn now.`),
-        );
+        commentOnMove({
+          gameLog: logAfterCoach,
+          trigger: afterEngine.isGameOver() ? "game_over" : "coach_move",
+          mode: `Free play in ${lesson.name}`,
+          hint: afterEngine.isGameOver()
+            ? describeGameOver(afterEngine, lesson.name)
+            : undefined,
+        });
       }, 600);
 
       return true;
@@ -399,6 +450,7 @@ export default function Lesson() {
       ...l,
       fen: afterUserFen,
       moves: movesAfterUser,
+      gameLog: logAfterUser,
       status: l.status === "not_started" ? "started" : l.status,
       chat: [
         ...l.chat,
@@ -458,22 +510,27 @@ export default function Lesson() {
 
       setGame(afterComputer);
       setIsComputerThinking(false);
+      const logAfterCoach = appendCoachPlay(logAfterUser, computerSan);
       updateLesson(scheduledLessonId, (l) => ({
         ...l,
         fen: finalFen,
         moves: finalMoves,
+        gameLog: logAfterCoach,
         chat: [
           ...l.chat,
           { role: "coach" as const, content: coachMsg },
         ],
       }));
-      commentOnMove(
-        `Lesson: ${lesson.name}. Student played ${userSan} (move ${movesBefore.length + 1}), ` +
-        `you (Black) replied with ${computerSan}. ` +
-        (nextUserMove
-          ? `Next recommended student move is ${nextUserMove}.`
-          : `That's the end of the recorded main line.`),
-      );
+      commentOnMove({
+        gameLog: logAfterCoach,
+        trigger: "coach_move",
+        mode,
+        hint: nextUserMove
+          ? `Next recommended student move is ${nextUserMove}.` +
+            (nextUserMoveNote ? ` ${nextUserMoveNote}` : "") +
+            ` You must state this next move in spoken English.`
+          : "That's the end of the recorded main line.",
+      });
     }, 600);
 
     return true;
@@ -562,27 +619,29 @@ export default function Lesson() {
     setGame(rebuilt);
     clearSelection();
 
-    // Capture which moves were taken back so the coach can react to the undo.
-    const undoneMoves = lesson.moves.slice(newMoves.length);
+    const gameLogBefore = resolveGameLog(lesson.moves, lesson.gameLog);
+    const removed = removedPliesFromUndoneMoves(lesson.moves, newMoves.length);
+    const logAfterUndo = appendRollback(gameLogBefore, removed);
 
     updateLesson(lessonId, (l) => {
       const newChat = [...l.chat];
       // Remove last coach + user pair from chat
       if (newChat.length >= 1 && newChat[newChat.length - 1].role === "coach") newChat.pop();
       if (newChat.length >= 1 && newChat[newChat.length - 1].role === "user") newChat.pop();
-      return { ...l, fen: rebuilt.fen(), moves: newMoves, chat: newChat };
+      return { ...l, fen: rebuilt.fen(), moves: newMoves, gameLog: logAfterUndo, chat: newChat };
     });
 
-    // Tell the coach what was taken back so she can interrupt and react.
-    if (undoneMoves.length > 0) {
-      const description =
-        undoneMoves.length === 2
-          ? `your reply ${undoneMoves[1]} and the student's move ${undoneMoves[0]}`
-          : `the student's move ${undoneMoves[0]}`;
-      commentOnMove(
-        `Lesson: ${lesson.name}. The student tapped undo and took back ${description}. ` +
-        `The position is back to before that. React briefly to the takeback.`,
-      );
+    if (removed.length > 0) {
+      const opening = OPENINGS[lessonId];
+      const nextUserMove = opening?.line[newMoves.length] ?? null;
+      commentOnMove({
+        gameLog: logAfterUndo,
+        trigger: "undo",
+        mode: `Lesson: ${lesson.name}`,
+        hint: nextUserMove
+          ? `After undo, remind the student their next move should be ${nextUserMove} in spoken English.`
+          : undefined,
+      });
     }
   };
 
@@ -602,14 +661,16 @@ export default function Lesson() {
     clearSelection();
     setGame(new Chess());
 
+    const logWithReset = appendReset(resolveGameLog(lesson.moves, lesson.gameLog));
+
     resetLesson(lessonId);
 
-    // If the coach is mid-sentence, cut her off and let her react to the reset.
     interruptAssistant();
-    commentOnMove(
-      `Lesson: ${lesson.name}. The student just reset the lesson — the board is back to the starting position. ` +
-      `Make a short remark about starting over.`,
-    );
+    commentOnMove({
+      gameLog: logWithReset,
+      trigger: "reset",
+      mode: `Lesson: ${lesson.name}`,
+    });
   };
 
   const handleFinish = () => {
@@ -719,6 +780,11 @@ export default function Lesson() {
           >
             <Check className="w-5 h-5" />
           </Button>
+          <Link href="/settings">
+            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground" title="Settings">
+              <Settings className="w-5 h-5" />
+            </Button>
+          </Link>
         </div>
       </header>
 

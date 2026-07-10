@@ -3,8 +3,8 @@ import { Router } from "express";
 const router = Router();
 
 // OpenAI Realtime API (GA) — model + voice.
-// `gpt-realtime` is the GA realtime model; "marin" is a warm, expressive voice.
-const REALTIME_MODEL = "gpt-realtime";
+// `gpt-realtime-2` is the reasoning realtime model; "marin" is a warm, expressive voice.
+const REALTIME_MODEL = "gpt-realtime-2";
 const REALTIME_VOICE = "marin";
 
 /**
@@ -33,6 +33,7 @@ router.post("/realtime/session", async (_req, res) => {
         session: {
           type: "realtime",
           model: REALTIME_MODEL,
+          reasoning: { effort: "minimal" },
           audio: {
             output: { voice: REALTIME_VOICE },
           },

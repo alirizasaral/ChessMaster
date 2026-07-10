@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { Chess, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
+import { useStore } from "@/hooks/use-store";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
@@ -12,9 +13,19 @@ import {
   PhoneCall,
   PhoneOff,
   RotateCcw,
+  Settings,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { pickEngineMoveSan, describeGameOver } from "@/lib/engine";
+import {
+  appendCoachPlay,
+  appendReset,
+  appendRollback,
+  appendStudentPlay,
+  removedPliesFromUndoneMoves,
+  resolveGameLog,
+  type GameEvent,
+} from "@/lib/game-transcript";
 import { useRealtimeCoach } from "@/lib/use-realtime";
 
 const STORE_KEY = "chess-trainer:free-play";
@@ -28,20 +39,17 @@ interface ChatMessage {
 interface FreePlayState {
   fen: string;
   moves: string[];
+  gameLog: GameEvent[];
   chat: ChatMessage[];
 }
 
-function loadState(): FreePlayState {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return JSON.parse(raw) as FreePlayState;
-  } catch {
-    /* noop */
-  }
+function normalizeFreePlayState(raw: Partial<FreePlayState>): FreePlayState {
+  const moves = raw.moves ?? [];
   return {
-    fen: DEFAULT_FEN,
-    moves: [],
-    chat: [
+    fen: raw.fen ?? DEFAULT_FEN,
+    moves,
+    gameLog: resolveGameLog(moves, raw.gameLog),
+    chat: raw.chat ?? [
       {
         role: "coach",
         content:
@@ -49,6 +57,16 @@ function loadState(): FreePlayState {
       },
     ],
   };
+}
+
+function loadState(): FreePlayState {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return normalizeFreePlayState(JSON.parse(raw) as Partial<FreePlayState>);
+  } catch {
+    /* noop */
+  }
+  return normalizeFreePlayState({});
 }
 
 function saveState(s: FreePlayState) {
@@ -61,6 +79,8 @@ function saveState(s: FreePlayState) {
 
 export default function FreePlay() {
   const { toast } = useToast();
+  const { state: appState } = useStore();
+  const userName = appState.settings.userName;
   const [state, setState] = useState<FreePlayState>(() => loadState());
   const [game, setGame] = useState(() => {
     try {
@@ -92,7 +112,7 @@ export default function FreePlay() {
     speakIntro,
     interruptAssistant,
     setMicMuted,
-  } = useRealtimeCoach();
+  } = useRealtimeCoach({ userName });
 
   // Persist on every state change.
   useEffect(() => {
@@ -123,31 +143,41 @@ export default function FreePlay() {
   // using a snapshot of game state at that moment. Keyed only on
   // `voiceReady` so move updates don't re-fire it (which would otherwise
   // cancel in-flight per-move commentary via speakIntro's interrupt).
-  const introSnapshotRef = useRef<{ moves: string[]; turn: "w" | "b" }>({
-    moves: [],
+  const introSnapshotRef = useRef<{ gameLog: GameEvent[]; turn: "w" | "b" }>({
+    gameLog: [],
     turn: "w",
   });
   useEffect(() => {
-    introSnapshotRef.current = { moves: state.moves, turn: game.turn() };
-  }, [state.moves, game]);
+    introSnapshotRef.current = {
+      gameLog: resolveGameLog(state.moves, state.gameLog),
+      turn: game.turn(),
+    };
+  }, [state.moves, state.gameLog, game]);
 
   useEffect(() => {
     if (!voiceReady) return;
     const snap = introSnapshotRef.current;
-    if (snap.moves.length === 0) {
-      speakIntro(
-        `Free play game starting. The student plays WHITE, you play BLACK. ` +
-        `Greet them and tell them to make any opening move they like. One short sentence.`,
-      );
+    const hasPlays = snap.gameLog.some((e) => e.type === "play");
+
+    const who = userName ?? "the student";
+
+    if (!hasPlays) {
+      speakIntro({
+        instructions:
+          `Free play game starting. ${who} plays WHITE, you play BLACK. ` +
+          `Greet them and tell them to make any opening move they like.`,
+        gameLog: snap.gameLog,
+      });
     } else {
-      const turn = snap.turn === "w" ? "the student's (White)" : "your (Black)";
-      speakIntro(
-        `Free play game in progress. The student plays WHITE, you play BLACK. ` +
-        `Moves played so far: ${snap.moves.join(" ")}. It's ${turn} turn. ` +
-        `Welcome the student back in one short sentence.`,
-      );
+      const turn = snap.turn === "w" ? `${who}'s (White)` : "your (Black)";
+      speakIntro({
+        instructions:
+          `Free play game in progress. ${who} plays WHITE, you play BLACK. ` +
+          `It's ${turn} turn. Welcome ${who} back.`,
+        gameLog: snap.gameLog,
+      });
     }
-  }, [voiceReady, speakIntro]);
+  }, [voiceReady, speakIntro, userName]);
 
   // Cleanup pending timeouts on unmount
   useEffect(() => {
@@ -213,6 +243,9 @@ export default function FreePlay() {
     const userSan = res.san;
     const afterUserFen = copy.fen();
     const movesAfterUser = [...state.moves, userSan];
+    const gameLogBefore = resolveGameLog(state.moves, state.gameLog);
+    const logAfterUser = appendStudentPlay(gameLogBefore, userSan);
+    const mode = "Free play";
 
     setGame(copy);
     clearSelection();
@@ -223,16 +256,19 @@ export default function FreePlay() {
       setState((s) => ({
         fen: afterUserFen,
         moves: movesAfterUser,
+        gameLog: logAfterUser,
         chat: [
           ...s.chat,
           { role: "user", content: `Played ${userSan}` },
           { role: "coach", content: end },
         ],
       }));
-      commentOnMove(
-        `Free play. Student (White) just played ${userSan} and the game is over. ` +
-        `${end} Give one short reaction.`,
-      );
+      commentOnMove({
+        gameLog: logAfterUser,
+        trigger: "game_over",
+        mode,
+        hint: end,
+      });
       return true;
     }
 
@@ -240,18 +276,18 @@ export default function FreePlay() {
     setState((s) => ({
       fen: afterUserFen,
       moves: movesAfterUser,
+      gameLog: logAfterUser,
       chat: [...s.chat, { role: "user", content: `Played ${userSan}` }],
     }));
     setIsComputerThinking(true);
 
-    // Live coach feedback on the student's move — fired immediately so the
-    // coach reacts while the engine "thinks". Tells the coach plainly: this
-    // is free play, student plays White, give an insightful one-sentence read.
-    commentOnMove(
-      `Free play (no lesson script). The student plays WHITE and just played ${userSan} (move ${movesAfterUser.length}). ` +
-      `You play BLACK and are about to reply. Give ONE short, insightful read on the student's move — ` +
-      `is it good, dubious, what does it do, what should they watch for. Stay in character.`,
-    );
+    commentOnMove({
+      gameLog: logAfterUser,
+      trigger: "student_move",
+      mode,
+      hint:
+        "Give ONE short, insightful read on the student's move — is it good, dubious, what does it do, what should they watch for. You are about to reply as Black.",
+    });
 
     if (pendingReplyRef.current !== null) {
       window.clearTimeout(pendingReplyRef.current);
@@ -283,21 +319,23 @@ export default function FreePlay() {
 
       setGame(after);
       setIsComputerThinking(false);
+      const logAfterCoach = engineSan
+        ? appendCoachPlay(logAfterUser, engineSan)
+        : logAfterUser;
       setState((s) => ({
         fen: finalFen,
         moves: finalMoves,
+        gameLog: logAfterCoach,
         chat: [...s.chat, { role: "coach", content: coachMsg }],
       }));
-      commentOnMove(
-        `Free play. The student (White) played ${userSan}. ` +
-        (engineSan
-          ? `You (Black) just replied with ${engineSan}. `
-          : `You have no legal reply. `) +
-        (after.isGameOver()
-          ? `Game over: ${describeGameOver(after, "free play")} `
-          : `It's the student's turn now. `) +
-        `Give ONE short, witty comment about your own move (no recap of theirs).`,
-      );
+      commentOnMove({
+        gameLog: logAfterCoach,
+        trigger: after.isGameOver() ? "game_over" : "coach_move",
+        mode,
+        hint: after.isGameOver()
+          ? describeGameOver(after, "free play")
+          : "Give ONE short, witty comment about your own move (no recap of theirs).",
+      });
     }, 600);
 
     return true;
@@ -360,7 +398,9 @@ export default function FreePlay() {
     const rebuilt = new Chess();
     newMoves.forEach((m) => rebuilt.move(m));
 
-    const undone = state.moves.slice(newMoves.length);
+    const gameLogBefore = resolveGameLog(state.moves, state.gameLog);
+    const removed = removedPliesFromUndoneMoves(state.moves, newMoves.length);
+    const logAfterUndo = appendRollback(gameLogBefore, removed);
 
     setGame(rebuilt);
     clearSelection();
@@ -368,17 +408,15 @@ export default function FreePlay() {
       const newChat = [...s.chat];
       if (newChat.length >= 1 && newChat[newChat.length - 1].role === "coach") newChat.pop();
       if (newChat.length >= 1 && newChat[newChat.length - 1].role === "user") newChat.pop();
-      return { fen: rebuilt.fen(), moves: newMoves, chat: newChat };
+      return { fen: rebuilt.fen(), moves: newMoves, gameLog: logAfterUndo, chat: newChat };
     });
 
-    if (undone.length > 0) {
-      const desc =
-        undone.length === 2
-          ? `your reply ${undone[1]} and the student's move ${undone[0]}`
-          : `the student's move ${undone[0]}`;
-      commentOnMove(
-        `Free play. The student tapped undo and took back ${desc}. Give ONE short reaction.`,
-      );
+    if (removed.length > 0) {
+      commentOnMove({
+        gameLog: logAfterUndo,
+        trigger: "undo",
+        mode: "Free play",
+      });
     }
   };
 
@@ -396,9 +434,13 @@ export default function FreePlay() {
     clearSelection();
     const fresh = new Chess();
     setGame(fresh);
+
+    const logWithReset = appendReset(resolveGameLog(state.moves, state.gameLog));
+
     setState({
       fen: fresh.fen(),
       moves: [],
+      gameLog: [],
       chat: [
         {
           role: "coach",
@@ -410,10 +452,13 @@ export default function FreePlay() {
 
     interruptAssistant();
     if (voiceReady) {
-      speakIntro(
-        `The student just reset the free-play board to the starting position. ` +
-        `Make one short remark about starting fresh.`,
-      );
+      const who = userName ?? "the student";
+      speakIntro({
+        instructions:
+          `${who} just reset the free-play board to the starting position. ` +
+          `Make one short remark about starting fresh.`,
+        gameLog: logWithReset,
+      });
     }
   };
 
@@ -500,6 +545,11 @@ export default function FreePlay() {
           >
             <RotateCcw className="w-5 h-5" />
           </Button>
+          <Link href="/settings">
+            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground" title="Settings">
+              <Settings className="w-5 h-5" />
+            </Button>
+          </Link>
         </div>
       </header>
 

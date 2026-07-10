@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { formatGameTranscript, type GameEvent } from "@/lib/game-transcript";
 
 /**
  * useRealtimeCoach
@@ -26,36 +27,170 @@ type Status = "idle" | "connecting" | "connected" | "error";
  */
 export type CoachMode = "lesson" | "free-play";
 
+export type RealtimeTrigger =
+  | "student_move"
+  | "coach_move"
+  | "off_line_move"
+  | "undo"
+  | "reset"
+  | "game_over";
+
+export interface RealtimeMoveContext {
+  gameLog: GameEvent[];
+  trigger: RealtimeTrigger;
+  mode: string;
+  hint?: string;
+}
+
+export interface RealtimeIntroContext {
+  instructions: string;
+  gameLog?: GameEvent[];
+}
+
+const TRIGGER_LABELS: Record<RealtimeTrigger, string> = {
+  student_move: "The student (White) just played a move.",
+  coach_move: "You (Black) just played a reply move.",
+  off_line_move: "The student (White) played a move that is NOT on the lesson main line.",
+  undo: "The student tapped undo and took back one or more moves.",
+  reset: "The student reset the board to the starting position.",
+  game_over: "The game just ended.",
+};
+
+function buildVerbosityLine(ctx: RealtimeMoveContext): string {
+  if (ctx.trigger === "off_line_move") {
+    return "Two short sentences: warn about the wrong move, state the correct move in spoken English, and ask them to tap undo to revert.";
+  }
+  if (ctx.trigger === "coach_move" && ctx.mode.startsWith("Lesson:")) {
+    return "Two short sentences: react to your move, then state the next move the student should play in spoken English.";
+  }
+  if (ctx.hint?.includes("EXPLAIN")) {
+    return "3–5 sentences max, still in character.";
+  }
+  if (ctx.hint?.toLowerCase().includes("next recommended student move")) {
+    return "Two short sentences: include the next move the student should play in spoken English.";
+  }
+  return "One short sentence unless the hint requests a next-move mention or contains EXPLAIN.";
+}
+
+function buildRealtimeInstructions(ctx: RealtimeMoveContext, userName?: string): string {
+  const transcript = formatGameTranscript(ctx.gameLog);
+  const studentLabel = userName ?? "student";
+  const parts = [
+    `# Task`,
+    `React to the latest chess event. Stay in character.`,
+    ``,
+    `# Current State`,
+    `- Latest event: ${TRIGGER_LABELS[ctx.trigger]}`,
+    `- Mode: ${ctx.mode}`,
+  ];
+  if (userName) {
+    parts.push(`- Student: ${userName}`);
+  }
+  parts.push(
+    ``,
+    `# Authoritative Source — Game Transcript`,
+    `(${studentLabel} = White, coach = Black)`,
+    ``,
+    transcript,
+  );
+  if (ctx.hint) {
+    parts.push(``, `# Hint`, ctx.hint);
+  }
+  parts.push(
+    ``,
+    `# Verbosity for this turn`,
+    buildVerbosityLine(ctx),
+  );
+  return parts.join("\n");
+}
+
 // SDP exchange endpoint for OpenAI Realtime GA. (The beta endpoint
 // `/v1/realtime` was retired alongside the beta sessions API.)
 const REALTIME_SDP_URL = "https://api.openai.com/v1/realtime/calls";
 
-const COACH_PERSONA = `You are a snarky, theatrical chess grandmaster coaching a complete beginner.
+/** VAD + noise settings tuned for noisy environments (cafes, etc.). */
+const REALTIME_AUDIO_INPUT = {
+  turn_detection: {
+    type: "semantic_vad" as const,
+    eagerness: "low" as const,
+    interrupt_response: false,
+  },
+  noise_reduction: { type: "near_field" as const },
+  transcription: { model: "whisper-1" },
+};
 
-ROLES (very important — never get this wrong):
-- The STUDENT plays the WHITE pieces.
-- YOU play the BLACK pieces against them.
-Always speak from this perspective. "I played" = a Black move. "You played" = the student's White move. If you ever feel confused about whose turn it is or what color a piece is, trust the context the app gives you in each prompt.
+function buildCoachPersona(userName?: string): string {
+  const studentRef = userName ?? "a complete beginner";
+  const nameLine = userName
+    ? `- The student's name is ${userName}. Address them by name occasionally.`
+    : "";
+  return `# Role and Objective
+You are a snarky, theatrical chess grandmaster coaching ${studentRef} in live voice.
+React to moves with witty one-liners, answer the student's chess questions in plain English, and lightly guide them in lesson mode.
 
-LANGUAGE (very important — the student does not know chess notation):
-- Use simple, everyday English. Talk like you're chatting at a cafe, not writing a chess book.
-- ALWAYS refer to pieces by their full names: pawn, knight, bishop, rook, queen, king.
-- NEVER say algebraic notation out loud (no "Nf3", no "e4", no "Qxh7"). Instead say things like "I moved my knight to f3", "you pushed your king's pawn two squares", "I took your bishop with my queen".
-- Square names like "e4" are okay only when describing where a piece went; never use piece letters like N, B, R, Q, K when speaking.
-- Mention colors when it's not obvious ("your white knight", "my black bishop").
+# Personality and Tone
+- Witty, theatrical, playful — pro-wrestler trash talk meets chess commentator
+- Lightly ridiculing but never mean or vulgar
+- Vary reactions: mock the move, feign concern, praise sarcastically, name-drop famous players
+${nameLine}
 
-BREVITY (very important):
-- DEFAULT to ONE short sentence — about 10 to 15 spoken words. Snappy, witty, in character. That's it.
-- Two sentences only when there's truly more to say (e.g. a move AND a hint about what comes next).
-- Go longer (3-5 sentences max) ONLY when the student explicitly asks for a detailed explanation, asks "why", or asks you to teach them something. Then speak clearly and helpfully — still in character, but more teacher than trash-talker.
-- Never lecture unprompted. Never recap what just happened — they saw it.
+# Language
+- English is the default response language
+- Use plain everyday English — the student does not know chess notation
+- Refer to pieces by full names: pawn, knight, bishop, rook, queen, king
+- Do not speak algebraic notation aloud (say "my knight to f3", not "Nf3")
+- Square names like "e four" are fine when describing where a piece went
+- Mention colors when it helps ("your white knight", "my black bishop")
 
-STYLE:
-- Witty, lightly ridiculing, playful — pro-wrestler trash talk meets chess commentator. Never mean, never vulgar.
-- Vary your reactions: mock the move, feign concern, praise sarcastically, name-drop famous players, etc.
-- When the app's prompt tells you the next recommended move in a lesson, casually mention it ("now park your knight on f3" / "next, push that c-pawn").`;
+# Roles
+- The student plays the WHITE pieces; you play BLACK
+- "I" = your black move; "you" = the student's white move
+- If unsure about the position, trust the game transcript in each prompt
 
-export function useRealtimeCoach() {
+# Reasoning
+- For move reactions and short acknowledgments, respond quickly without extended reasoning
+- For "why" questions or explicit explanation requests, reason briefly before answering
+
+# Preambles
+- Skip preambles for move reactions — speak the comment directly
+- Do not use filler like "Let me think...", "One moment...", or "I'll process that..."
+- For explanatory answers to direct questions, skip preambles unless silence would feel unresponsive
+
+# Verbosity
+- Move reactions: 1 short sentence (10–15 spoken words)
+- With a hint about the next move: up to 2 sentences
+- Explanations (student asks why, or hint contains EXPLAIN): 3–5 sentences max, still in character
+- Do not recap what they just saw on the board
+
+# Unclear Audio
+- Respond only when the student clearly speaks to you about chess
+- If their speech is unclear but they seem to be addressing you, ask once: "Sorry, could you repeat that clearly?"
+- Do not guess from unclear audio or reason when audio is unintelligible
+
+# Background Noise
+- Many students play in cafes with ambient chatter, music, and espresso machines
+- Ignore background noise, side conversations, and speech not directed at you — stay silent
+- Do not respond to silence, distant voices, or café ambiance
+- Do not say "I didn't catch that" or "I'm here" for background noise alone
+- Only speak when the student clearly asks you a chess question or makes a direct request
+
+# Long Context Behavior
+- The game transcript in each prompt is authoritative for position and moves
+- Focus on the latest event unless the student asks about an earlier position
+
+# Reference Pronunciations
+- Say full piece names, not single letters
+- Translate any notation in the transcript into spoken English before saying it
+
+# Variety
+- Do not reuse the same opener or catchphrase across turns
+
+# Lesson Mode
+- In lesson mode, after you play a reply move, always tell the student their next move in spoken English
+- If the student plays an off-line move, warn them it is not the lesson main line, name the correct move in spoken English, and ask them to tap undo to revert`;
+}
+
+export function useRealtimeCoach({ userName }: { userName?: string } = {}) {
   const [status, setStatus] = useState<Status>("idle");
   const [isMicMuted, setMicMutedState] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
@@ -73,6 +208,11 @@ export function useRealtimeCoach() {
   // we send `response.create` (so we can cancel even before audio starts
   // streaming), and reset on response lifecycle terminators.
   const responseActiveRef = useRef(false);
+  const userNameRef = useRef(userName);
+
+  useEffect(() => {
+    userNameRef.current = userName;
+  }, [userName]);
 
   const disconnect = useCallback(() => {
     if (dcRef.current) {
@@ -142,7 +282,7 @@ export function useRealtimeCoach() {
         model?: string;
       };
       const ephemeralKey = session.value ?? session.client_secret?.value;
-      const model = session.model ?? "gpt-realtime";
+      const model = session.model ?? "gpt-realtime-2";
       if (!ephemeralKey) throw new Error("Realtime session returned no ephemeral key");
 
       // 2) Build the peer connection.
@@ -160,7 +300,13 @@ export function useRealtimeCoach() {
       // 4) Capture mic and add it to the peer connection.
       //    getUserMedia must be called from a user gesture — this hook should
       //    only be invoked from a click handler.
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       micStreamRef.current = micStream;
       micStream.getTracks().forEach((t) => pc.addTrack(t, micStream));
 
@@ -178,18 +324,11 @@ export function useRealtimeCoach() {
             type: "session.update",
             session: {
               type: "realtime",
-              instructions: COACH_PERSONA,
+              instructions: buildCoachPersona(userNameRef.current),
+              reasoning: { effort: "minimal" },
               output_modalities: ["audio"],
               audio: {
-                input: {
-                  turn_detection: {
-                    type: "server_vad",
-                    silence_duration_ms: 600,
-                    threshold: 0.5,
-                    prefix_padding_ms: 300,
-                  },
-                  transcription: { model: "whisper-1" },
-                },
+                input: REALTIME_AUDIO_INPUT,
                 output: { voice: "marin" },
               },
             },
@@ -281,12 +420,10 @@ export function useRealtimeCoach() {
 
   /**
    * Ask the realtime model to comment on what just happened.
-   * `context` is a free-form description of the move(s) — e.g.
-   *   "User played e4 (1. e4 — King's pawn). You should reply with e5."
-   * The model will improvise a short witty spoken comment.
+   * Sends the full annotated game transcript plus a trigger label and optional hint.
    * Silently no-ops if not connected.
    */
-  const commentOnMove = useCallback((context: string) => {
+  const commentOnMove = useCallback((ctx: RealtimeMoveContext) => {
     const dc = dcRef.current;
     if (!dc || dc.readyState !== "open") return;
     // Interrupt any in-flight response (speaking OR just-requested but not
@@ -310,18 +447,7 @@ export function useRealtimeCoach() {
         type: "response.create",
         response: {
           output_modalities: ["audio"],
-          instructions:
-            `React to the latest event in the chess game described below. Stay fully in character ` +
-            `(snarky theatrical grandmaster).\n\n` +
-            `LENGTH: default to ONE short sentence (10–15 spoken words). Only use two sentences if ` +
-            `the context says to also hint at the next move. Do NOT go longer unless the context ` +
-            `explicitly says "EXPLAIN" or the student asked you to explain.\n\n` +
-            `ROLES (do not get this wrong): the student plays the WHITE pieces, you play BLACK. ` +
-            `"I" = a black move you played, "you" = the student's white move.\n\n` +
-            `SPEECH: plain English with full piece names (pawn, knight, bishop, rook, queen, king). ` +
-            `Never read algebraic notation aloud — say "I moved my knight to f3", never "Nf3". ` +
-            `Translate any notation in the context into spoken English before saying it.\n\n` +
-            `Context:\n${context}`,
+          instructions: buildRealtimeInstructions(ctx, userNameRef.current),
         },
       }),
     );
@@ -332,7 +458,7 @@ export function useRealtimeCoach() {
    * mode switches, or other system-level utterances that aren't a reaction
    * to a specific move. Interrupts any in-flight response first.
    */
-  const speakIntro = useCallback((instructions: string) => {
+  const speakIntro = useCallback(({ instructions, gameLog }: RealtimeIntroContext) => {
     const dc = dcRef.current;
     if (!dc || dc.readyState !== "open") return;
     if (responseActiveRef.current) {
@@ -346,16 +472,19 @@ export function useRealtimeCoach() {
       setIsAssistantSpeaking(false);
     }
     responseActiveRef.current = true;
+
+    const studentLabel = userNameRef.current ?? "student";
+    const transcriptBlock =
+      gameLog && gameLog.length > 0
+        ? `\n\n# Authoritative Source — Game Transcript\n(${studentLabel} = White, coach = Black)\n\n${formatGameTranscript(gameLog)}`
+        : "";
+
     dc.send(
       JSON.stringify({
         type: "response.create",
         response: {
           output_modalities: ["audio"],
-          instructions:
-            `Speak briefly to the student in character. ` +
-            `Plain English, piece names only (no algebraic notation aloud). ` +
-            `Remember: the student plays WHITE, you play BLACK. Keep it short — one or two sentences.\n\n` +
-            instructions,
+          instructions: `# Task\n${instructions}${transcriptBlock}`,
         },
       }),
     );
