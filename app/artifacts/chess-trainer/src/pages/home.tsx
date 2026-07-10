@@ -4,6 +4,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Play, CheckCircle2, RotateCcw, Heart, Trash2, Sparkles, Settings } from "lucide-react";
+import { Logo } from "@/components/logo";
 
 export default function Home() {
   const { state, resetAllLessons } = useStore();
@@ -21,10 +22,7 @@ export default function Home() {
     <div className="min-h-[100dvh] w-full bg-background">
       <div className="max-w-2xl mx-auto p-4 md:p-6 lg:p-8 space-y-6">
         <header className="flex items-start justify-between py-4 gap-4">
-          <div className="space-y-2">
-            <h1 className="text-3xl font-serif text-primary tracking-tight">Chess Opening Trainer</h1>
-            <p className="text-muted-foreground text-lg">Master the most essential openings move by move.</p>
-          </div>
+          <Logo showTagline size="lg" markTile />
           <Link href="/settings">
             <Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground hover:text-foreground" title="Settings">
               <Settings className="w-5 h-5" />

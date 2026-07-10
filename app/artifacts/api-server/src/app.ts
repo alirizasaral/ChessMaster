@@ -1,3 +1,4 @@
+import path from "node:path";
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
@@ -30,5 +31,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+
+const staticDir = process.env.STATIC_DIR;
+if (staticDir) {
+  app.use(express.static(staticDir, { index: false }));
+
+  app.get(/^(?!\/api(?:\/|$)).*/, (_req, res) => {
+    res.sendFile(path.join(staticDir, "index.html"));
+  });
+}
 
 export default app;
