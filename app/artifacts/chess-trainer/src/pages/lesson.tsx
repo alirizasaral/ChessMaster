@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, Link } from "wouter";
 import { Chess, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
@@ -27,6 +27,8 @@ import {
   removedPliesFromUndoneMoves,
   resolveGameLog,
 } from "@/lib/game-transcript";
+import type { CoachEvent } from "@/lib/coach-prompts";
+import { useEmitCoach } from "@/lib/use-emit-coach";
 import { useRealtimeCoach } from "@/lib/use-realtime";
 import { getVoiceCoachErrorToast } from "@/lib/openai-quota-error";
 import { computeBoardSize, DESKTOP_BREAKPOINT } from "@/lib/board-layout";
@@ -61,12 +63,39 @@ export default function Lesson() {
 
   const lesson = lessonId ? state.lessons[lessonId] : null;
   const userName = state.settings.userName;
+  const lessonIdRef = useRef(lessonId);
+  lessonIdRef.current = lessonId;
+
+  const appendCoachMessage = useCallback(
+    (content: string) => {
+      const id = lessonIdRef.current;
+      if (!id) return;
+      updateLesson(id, (l) => ({
+        ...l,
+        chat: [...l.chat, { role: "coach" as const, content }],
+      }));
+    },
+    [updateLesson],
+  );
+
+  const appendUserMessage = useCallback(
+    (content: string) => {
+      const id = lessonIdRef.current;
+      if (!id) return;
+      updateLesson(id, (l) => ({
+        ...l,
+        chat: [...l.chat, { role: "user" as const, content }],
+      }));
+    },
+    [updateLesson],
+  );
 
   const {
     status: voiceStatus,
     isReady: voiceReady,
     isMicMuted,
     isAssistantSpeaking,
+    isGenerating: isVoiceGenerating,
     lastError: voiceError,
     errorKind: voiceErrorKind,
     connect: connectVoice,
@@ -75,7 +104,32 @@ export default function Lesson() {
     speakIntro,
     interruptAssistant,
     setMicMuted,
-  } = useRealtimeCoach({ userName });
+  } = useRealtimeCoach({
+    userName,
+    onAssistantTranscript: appendCoachMessage,
+    onUserTranscript: appendUserMessage,
+  });
+
+  const voiceConnected = voiceStatus === "connected" && voiceReady;
+
+  const onCoachError = useCallback(
+    (description: string) => {
+      toast({
+        title: "Coach unavailable",
+        description,
+        variant: "destructive",
+      });
+    },
+    [toast],
+  );
+
+  const { emitCoach, isTextPending } = useEmitCoach({
+    voiceConnected,
+    commentOnMove,
+    userName,
+    onCoachText: appendCoachMessage,
+    onError: onCoachError,
+  });
 
   const handleToggleVoice = async () => {
     if (voiceStatus === "connected" || voiceStatus === "connecting") {
@@ -122,9 +176,9 @@ export default function Lesson() {
     if (snap.moves.length === 0) {
       speakIntro({
         instructions:
-          `Greet ${who} for the ${snap.name} lesson. ` +
+          `Greet ${who} for the ${snap.name} lesson as a friendly opening coach. ` +
           `Tell them the very first move they should play is ${opening?.line[0] ?? "the recommended opening move"} ` +
-          `(translate into spoken English, e.g. "push your king's pawn two squares" for 1.e4).`,
+          `(say it clearly, e.g. "e four" or "push your king's pawn two squares" for 1.e4).`,
         gameLog: snap.gameLog,
       });
     } else if (nextUserMove) {
@@ -132,7 +186,7 @@ export default function Lesson() {
         instructions:
           `Lesson in progress: ${snap.name}. ` +
           `Welcome ${who} back and tell them the next move they should play is ${nextUserMove}. ` +
-          `Translate it into spoken English.`,
+          `Say the move clearly for a beginner.`,
         gameLog: snap.gameLog,
       });
     } else {
@@ -313,13 +367,11 @@ export default function Lesson() {
     // Check whether the user's move follows the opening's main line.
     const check = checkOpeningMove(lessonId, movesBefore, userSan);
 
-    // Helper: post chat + persist current FEN/moves
+    // Helper: post user chat line + persist + ask the coach (voice or text)
     const pushUserAndCoach = (
-      coachContent: string,
       finalFen: string,
       finalMoves: string[],
-      trigger: "student_move" | "off_line_move" | "game_over" = "student_move",
-      voiceHint?: string,
+      event: CoachEvent,
     ) => {
       updateLesson(lessonId, (l) => ({
         ...l,
@@ -330,38 +382,32 @@ export default function Lesson() {
         chat: [
           ...l.chat,
           { role: "user" as const, content: `Played ${userSan}`, moveNumber: movesBefore.length + 1 },
-          { role: "coach" as const, content: coachContent },
         ],
       }));
-      commentOnMove({
-        gameLog: logAfterUser,
-        trigger,
-        mode,
-        hint: voiceHint ?? `On-screen coach note: ${coachContent}`,
-      });
+      emitCoach(event);
     };
 
     // Off-line: gently correct the user. Don't auto-play.
     if (!check || check.kind === "off_line") {
       const expected = check && check.kind === "off_line" ? check.expected : null;
       const expectedNote = check && check.kind === "off_line" ? check.expectedNote : null;
-      let msg: string;
       let voiceHint: string;
       if (expected) {
-        msg = `That's not the main line of the ${lesson.name}. The recommended move is ${expected}.`;
-        if (expectedNote) msg += ` ${expectedNote}`;
-        msg += ` Tap undo and try again.`;
         voiceHint =
           `Wrong move for this lesson. The correct move is ${expected}.` +
           (expectedNote ? ` ${expectedNote}` : "") +
           ` Ask the student to tap undo to revert and try the recommended move.`;
       } else {
-        msg = `You're past the main line I know — feel free to keep playing or tap undo to revisit.`;
         voiceHint =
           "The student is past the recorded main line. Ask them to tap undo if they want to return to the lesson line.";
       }
       setGame(gameCopy);
-      pushUserAndCoach(msg, afterUserFen, movesAfterUser, "off_line_move", voiceHint);
+      pushUserAndCoach(afterUserFen, movesAfterUser, {
+        gameLog: logAfterUser,
+        trigger: "off_line_move",
+        mode,
+        hint: voiceHint,
+      });
       return true;
     }
 
@@ -372,7 +418,12 @@ export default function Lesson() {
       if (gameCopy.isGameOver()) {
         const endMsg = describeGameOver(gameCopy, lesson.name);
         setGame(gameCopy);
-        pushUserAndCoach(endMsg, afterUserFen, movesAfterUser, "game_over");
+        pushUserAndCoach(afterUserFen, movesAfterUser, {
+          gameLog: logAfterUser,
+          trigger: "game_over",
+          mode,
+          hint: endMsg,
+        });
         return true;
       }
 
@@ -410,17 +461,6 @@ export default function Lesson() {
         }
         const finalFen = afterEngine.fen();
 
-        let coachMsg: string;
-        if (afterEngine.isGameOver()) {
-          coachMsg = engineSan
-            ? `I played ${engineSan}. ${describeGameOver(afterEngine, lesson.name)}`
-            : describeGameOver(afterEngine, lesson.name);
-        } else if (engineSan) {
-          coachMsg = `I played ${engineSan}. Your move.`;
-        } else {
-          coachMsg = `I have no legal moves. ${describeGameOver(afterEngine, lesson.name)}`;
-        }
-
         setGame(afterEngine);
         setIsComputerThinking(false);
         const logAfterCoach = engineSan
@@ -431,15 +471,16 @@ export default function Lesson() {
           fen: finalFen,
           moves: finalMoves,
           gameLog: logAfterCoach,
-          chat: [...l.chat, { role: "coach" as const, content: coachMsg }],
         }));
-        commentOnMove({
+        emitCoach({
           gameLog: logAfterCoach,
           trigger: afterEngine.isGameOver() ? "game_over" : "coach_move",
           mode: `Free play in ${lesson.name}`,
           hint: afterEngine.isGameOver()
             ? describeGameOver(afterEngine, lesson.name)
-            : undefined,
+            : engineSan
+              ? `You played ${engineSan}. Give a short pedagogical comment and invite their next move.`
+              : undefined,
         });
       }, 600);
 
@@ -449,11 +490,16 @@ export default function Lesson() {
     // On-line: lesson complete?
     if (check.isComplete) {
       const opening = OPENINGS[lessonId];
-      let msg = `Excellent — ${userSan} is correct.`;
-      if (check.userMoveNote) msg += ` ${check.userMoveNote}`;
-      msg += `\n\n${opening ? opening.finalNote : "You've completed this line!"}`;
+      let hint = `Excellent — ${userSan} is correct.`;
+      if (check.userMoveNote) hint += ` ${check.userMoveNote}`;
+      hint += ` ${opening ? opening.finalNote : "You've completed this line!"}`;
       setGame(gameCopy);
-      pushUserAndCoach(msg, afterUserFen, movesAfterUser);
+      pushUserAndCoach(afterUserFen, movesAfterUser, {
+        gameLog: logAfterUser,
+        trigger: "student_move",
+        mode,
+        hint,
+      });
       return true;
     }
 
@@ -504,28 +550,27 @@ export default function Lesson() {
       const finalFen = afterComputer.fen();
       const finalMoves = [...movesAfterUser, computerSan];
 
-      // Build a rich coach message: explain why each move was played and what's next.
-      const parts: string[] = [];
-      parts.push(
+      // Pedagogical hint for the coach (Realtime or Completions).
+      const hintParts: string[] = [];
+      hintParts.push(
         userMoveNote
-          ? `Good — ${userSan}. ${userMoveNote}`
-          : `Good — ${userSan}.`,
+          ? `Student played ${userSan}. Note: ${userMoveNote}`
+          : `Student played ${userSan}.`,
       );
-      parts.push(
+      hintParts.push(
         computerMoveNote
-          ? `I played ${computerSan}. ${computerMoveNote}`
-          : `I played ${computerSan}.`,
+          ? `You played ${computerSan}. Note: ${computerMoveNote}`
+          : `You played ${computerSan}.`,
       );
       if (nextUserMove) {
-        parts.push(
+        hintParts.push(
           nextUserMoveNote
-            ? `Now play ${nextUserMove}. ${nextUserMoveNote}`
-            : `Now play ${nextUserMove}.`,
+            ? `Next recommended student move is ${nextUserMove}. ${nextUserMoveNote}`
+            : `Next recommended student move is ${nextUserMove}.`,
         );
       } else {
-        parts.push(`That's the end of the main line — well done!`);
+        hintParts.push("That's the end of the recorded main line.");
       }
-      const coachMsg = parts.join("\n\n");
 
       setGame(afterComputer);
       setIsComputerThinking(false);
@@ -535,20 +580,12 @@ export default function Lesson() {
         fen: finalFen,
         moves: finalMoves,
         gameLog: logAfterCoach,
-        chat: [
-          ...l.chat,
-          { role: "coach" as const, content: coachMsg },
-        ],
       }));
-      commentOnMove({
+      emitCoach({
         gameLog: logAfterCoach,
         trigger: "coach_move",
         mode,
-        hint: nextUserMove
-          ? `Next recommended student move is ${nextUserMove}.` +
-            (nextUserMoveNote ? ` ${nextUserMoveNote}` : "") +
-            ` You must state this next move in spoken English.`
-          : "That's the end of the recorded main line.",
+        hint: hintParts.join(" "),
       });
     }, 600);
 
@@ -653,12 +690,12 @@ export default function Lesson() {
     if (removed.length > 0) {
       const opening = OPENINGS[lessonId];
       const nextUserMove = opening?.line[newMoves.length] ?? null;
-      commentOnMove({
+      emitCoach({
         gameLog: logAfterUndo,
         trigger: "undo",
         mode: `Lesson: ${lesson.name}`,
         hint: nextUserMove
-          ? `After undo, remind the student their next move should be ${nextUserMove} in spoken English.`
+          ? `After undo, remind the student their next move should be ${nextUserMove}.`
           : undefined,
       });
     }
@@ -685,11 +722,14 @@ export default function Lesson() {
     resetLesson(lessonId);
 
     interruptAssistant();
-    commentOnMove({
-      gameLog: logWithReset,
-      trigger: "reset",
-      mode: `Lesson: ${lesson.name}`,
-    });
+    // Static welcome is restored by resetLesson; only speak/append when voice is on.
+    if (voiceConnected) {
+      emitCoach({
+        gameLog: logWithReset,
+        trigger: "reset",
+        mode: `Lesson: ${lesson.name}`,
+      });
+    }
   };
 
   const handleFinish = () => {
@@ -839,20 +879,27 @@ export default function Lesson() {
 
           <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 flex flex-col">
             {/* Thinking indicator — always visible at the top */}
-            {isComputerThinking && (
-              <div className="flex max-w-[92%] sm:max-w-[85%] mr-auto items-start">
+            {(isComputerThinking || isTextPending || isVoiceGenerating) && (
+              <div className="flex max-w-[92%] sm:max-w-[85%] mr-auto items-start animate-in fade-in slide-in-from-top-2 duration-300">
                 <div className="px-3 sm:px-4 py-2.5 sm:py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2 text-sm">
                   <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                  <span>Coach is replying...</span>
+                  <span>
+                    {isComputerThinking && !isTextPending && !isVoiceGenerating
+                      ? "Coach is replying..."
+                      : "Coach is thinking..."}
+                  </span>
                 </div>
               </div>
             )}
 
             {/* Chat messages — newest first */}
-            {([...(lesson.chat as ChatMessage[])].reverse()).map((msg, i) => (
+            {[...(lesson.chat as ChatMessage[])]
+              .map((msg, originalIndex) => ({ msg, originalIndex }))
+              .reverse()
+              .map(({ msg, originalIndex }) => (
               <div
-                key={i}
-                className={`flex flex-col max-w-[92%] sm:max-w-[85%] ${msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"}`}
+                key={originalIndex}
+                className={`flex flex-col max-w-[92%] sm:max-w-[85%] animate-in fade-in slide-in-from-top-2 duration-300 ${msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"}`}
               >
                 <div
                   className={`px-3 sm:px-4 py-2.5 sm:py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${

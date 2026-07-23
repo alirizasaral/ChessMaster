@@ -9,12 +9,28 @@ export interface HealthStatus {
   status: string;
 }
 
+export type CoachRequestTrigger = typeof CoachRequestTrigger[keyof typeof CoachRequestTrigger];
+
+
+export const CoachRequestTrigger = {
+  student_move: 'student_move',
+  coach_move: 'coach_move',
+  off_line_move: 'off_line_move',
+  undo: 'undo',
+  reset: 'reset',
+  game_over: 'game_over',
+} as const;
+
 export interface CoachRequest {
-  lessonId: string;
-  lessonName: string;
-  fen: string;
-  moves: string[];
-  lastMove: string;
+  trigger: CoachRequestTrigger;
+  /** Context label such as Lesson or Free play */
+  mode: string;
+  /** Formatted authoritative game transcript */
+  transcript: string;
+  /** Optional pedagogical hint for this turn */
+  hint?: string;
+  /** Optional student display name */
+  userName?: string;
 }
 
 export interface CoachResponse {

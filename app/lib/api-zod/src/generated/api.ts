@@ -21,11 +21,11 @@ export const HealthCheckResponse = zod.object({
  * @summary Get LLM coaching feedback for a chess move
  */
 export const GetCoachFeedbackBody = zod.object({
-  "lessonId": zod.string(),
-  "lessonName": zod.string(),
-  "fen": zod.string(),
-  "moves": zod.array(zod.string()),
-  "lastMove": zod.string()
+  "trigger": zod.enum(['student_move', 'coach_move', 'off_line_move', 'undo', 'reset', 'game_over']),
+  "mode": zod.string().describe('Context label such as Lesson or Free play'),
+  "transcript": zod.string().describe('Formatted authoritative game transcript'),
+  "hint": zod.string().optional().describe('Optional pedagogical hint for this turn'),
+  "userName": zod.string().optional().describe('Optional student display name')
 })
 
 export const GetCoachFeedbackResponse = zod.object({

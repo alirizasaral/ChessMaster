@@ -5,11 +5,16 @@
  * Chess Opening Trainer API
  * OpenAPI spec version: 0.1.0
  */
+import type { CoachRequestTrigger } from './coachRequestTrigger';
 
 export interface CoachRequest {
-  lessonId: string;
-  lessonName: string;
-  fen: string;
-  moves: string[];
-  lastMove: string;
+  trigger: CoachRequestTrigger;
+  /** Context label such as Lesson or Free play */
+  mode: string;
+  /** Formatted authoritative game transcript */
+  transcript: string;
+  /** Optional pedagogical hint for this turn */
+  hint?: string;
+  /** Optional student display name */
+  userName?: string;
 }

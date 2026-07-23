@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Link } from "wouter";
 import { Chess, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
@@ -26,6 +26,7 @@ import {
   resolveGameLog,
   type GameEvent,
 } from "@/lib/game-transcript";
+import { useEmitCoach } from "@/lib/use-emit-coach";
 import { useRealtimeCoach } from "@/lib/use-realtime";
 import { getVoiceCoachErrorToast } from "@/lib/openai-quota-error";
 import { computeBoardSize, DESKTOP_BREAKPOINT } from "@/lib/board-layout";
@@ -103,11 +104,26 @@ export default function FreePlay() {
   const pendingReplyRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const appendCoachMessage = useCallback((content: string) => {
+    setState((s) => ({
+      ...s,
+      chat: [...s.chat, { role: "coach", content }],
+    }));
+  }, []);
+
+  const appendUserMessage = useCallback((content: string) => {
+    setState((s) => ({
+      ...s,
+      chat: [...s.chat, { role: "user", content }],
+    }));
+  }, []);
+
   const {
     status: voiceStatus,
     isReady: voiceReady,
     isMicMuted,
     isAssistantSpeaking,
+    isGenerating: isVoiceGenerating,
     lastError: voiceError,
     errorKind: voiceErrorKind,
     connect: connectVoice,
@@ -116,7 +132,32 @@ export default function FreePlay() {
     speakIntro,
     interruptAssistant,
     setMicMuted,
-  } = useRealtimeCoach({ userName });
+  } = useRealtimeCoach({
+    userName,
+    onAssistantTranscript: appendCoachMessage,
+    onUserTranscript: appendUserMessage,
+  });
+
+  const voiceConnected = voiceStatus === "connected" && voiceReady;
+
+  const onCoachError = useCallback(
+    (description: string) => {
+      toast({
+        title: "Coach unavailable",
+        description,
+        variant: "destructive",
+      });
+    },
+    [toast],
+  );
+
+  const { emitCoach, isTextPending } = useEmitCoach({
+    voiceConnected,
+    commentOnMove,
+    userName,
+    onCoachText: appendCoachMessage,
+    onError: onCoachError,
+  });
 
   // Persist on every state change.
   useEffect(() => {
@@ -278,13 +319,9 @@ export default function FreePlay() {
         fen: afterUserFen,
         moves: movesAfterUser,
         gameLog: logAfterUser,
-        chat: [
-          ...s.chat,
-          { role: "user", content: `Played ${userSan}` },
-          { role: "coach", content: end },
-        ],
+        chat: [...s.chat, { role: "user", content: `Played ${userSan}` }],
       }));
-      commentOnMove({
+      emitCoach({
         gameLog: logAfterUser,
         trigger: "game_over",
         mode,
@@ -294,6 +331,7 @@ export default function FreePlay() {
     }
 
     // Show user's move, then schedule engine reply.
+    // Single coach utterance after the engine reply (no interim student_move call).
     setState((s) => ({
       fen: afterUserFen,
       moves: movesAfterUser,
@@ -301,14 +339,6 @@ export default function FreePlay() {
       chat: [...s.chat, { role: "user", content: `Played ${userSan}` }],
     }));
     setIsComputerThinking(true);
-
-    commentOnMove({
-      gameLog: logAfterUser,
-      trigger: "student_move",
-      mode,
-      hint:
-        "Give ONE short, insightful read on the student's move — is it good, dubious, what does it do, what should they watch for. You are about to reply as Black.",
-    });
 
     if (pendingReplyRef.current !== null) {
       window.clearTimeout(pendingReplyRef.current);
@@ -327,17 +357,6 @@ export default function FreePlay() {
       }
       const finalFen = after.fen();
 
-      let coachMsg: string;
-      if (after.isGameOver()) {
-        coachMsg = engineSan
-          ? `I played ${engineSan}. ${describeGameOver(after, "free play")}`
-          : describeGameOver(after, "free play");
-      } else if (engineSan) {
-        coachMsg = `I played ${engineSan}. Your move.`;
-      } else {
-        coachMsg = `I have no legal moves. ${describeGameOver(after, "free play")}`;
-      }
-
       setGame(after);
       setIsComputerThinking(false);
       const logAfterCoach = engineSan
@@ -347,15 +366,20 @@ export default function FreePlay() {
         fen: finalFen,
         moves: finalMoves,
         gameLog: logAfterCoach,
-        chat: [...s.chat, { role: "coach", content: coachMsg }],
+        chat: s.chat,
       }));
-      commentOnMove({
+
+      const hint = after.isGameOver()
+        ? describeGameOver(after, "free play")
+        : engineSan
+          ? `Student played ${userSan}. You replied with ${engineSan}. Give a short pedagogical comment covering both moves and invite their next move.`
+          : `Student played ${userSan}. Comment briefly and invite their next move.`;
+
+      emitCoach({
         gameLog: logAfterCoach,
         trigger: after.isGameOver() ? "game_over" : "coach_move",
         mode,
-        hint: after.isGameOver()
-          ? describeGameOver(after, "free play")
-          : "Give ONE short, witty comment about your own move (no recap of theirs).",
+        hint,
       });
     }, 600);
 
@@ -433,7 +457,7 @@ export default function FreePlay() {
     });
 
     if (removed.length > 0) {
-      commentOnMove({
+      emitCoach({
         gameLog: logAfterUndo,
         trigger: "undo",
         mode: "Free play",
@@ -472,13 +496,13 @@ export default function FreePlay() {
     });
 
     interruptAssistant();
-    if (voiceReady) {
-      const who = userName ?? "the student";
-      speakIntro({
-        instructions:
-          `${who} just reset the free-play board to the starting position. ` +
-          `Make one short remark about starting fresh.`,
+    // Static welcome restored above; only speak/append when voice is on.
+    if (voiceConnected) {
+      emitCoach({
         gameLog: logWithReset,
+        trigger: "reset",
+        mode: "Free play",
+        hint: "Acknowledge the fresh board and invite any opening move.",
       });
     }
   };
@@ -603,18 +627,25 @@ export default function FreePlay() {
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 flex flex-col">
-            {isComputerThinking && (
-              <div className="flex max-w-[92%] sm:max-w-[85%] mr-auto items-start">
+            {(isComputerThinking || isTextPending || isVoiceGenerating) && (
+              <div className="flex max-w-[92%] sm:max-w-[85%] mr-auto items-start animate-in fade-in slide-in-from-top-2 duration-300">
                 <div className="px-3 sm:px-4 py-2.5 sm:py-3 rounded-2xl bg-muted text-muted-foreground border border-border rounded-tl-sm flex items-center gap-2 text-sm">
                   <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                  <span>Coach is replying...</span>
+                  <span>
+                    {isComputerThinking && !isTextPending && !isVoiceGenerating
+                      ? "Coach is replying..."
+                      : "Coach is thinking..."}
+                  </span>
                 </div>
               </div>
             )}
-            {[...state.chat].reverse().map((msg, i) => (
+            {[...state.chat]
+              .map((msg, originalIndex) => ({ msg, originalIndex }))
+              .reverse()
+              .map(({ msg, originalIndex }) => (
               <div
-                key={i}
-                className={`flex flex-col max-w-[92%] sm:max-w-[85%] ${
+                key={originalIndex}
+                className={`flex flex-col max-w-[92%] sm:max-w-[85%] animate-in fade-in slide-in-from-top-2 duration-300 ${
                   msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"
                 }`}
               >

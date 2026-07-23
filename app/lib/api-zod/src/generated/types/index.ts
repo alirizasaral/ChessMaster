@@ -7,6 +7,7 @@
  */
 
 export * from './coachRequest';
+export * from './coachRequestTrigger';
 export * from './coachResponse';
 export * from './errorResponse';
 export * from './healthStatus';

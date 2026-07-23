@@ -71,24 +71,31 @@ components:
     CoachRequest:
       type: object
       required:
-        - lessonId
-        - lessonName
-        - fen
-        - moves
-        - lastMove
+        - trigger
+        - mode
+        - transcript
       properties:
-        lessonId:
+        trigger:
           type: string
-        lessonName:
+          enum:
+            - student_move
+            - coach_move
+            - off_line_move
+            - undo
+            - reset
+            - game_over
+        mode:
           type: string
-        fen:
+          description: Context label such as Lesson or Free play
+        transcript:
           type: string
-        moves:
-          type: array
-          items:
-            type: string
-        lastMove:
+          description: Formatted authoritative game transcript
+        hint:
           type: string
+          description: Optional pedagogical hint for this turn
+        userName:
+          type: string
+          description: Optional student display name
 
     CoachResponse:
       type: object
